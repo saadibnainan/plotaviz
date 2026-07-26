@@ -98,7 +98,11 @@ ignore = [
 "tests/*" = ["E501"]
 
 [tool.mypy]
-python_version = "3.11"
+# Deliberately unset: CI runs mypy under both 3.11 and 3.12. Pinning this to 3.11 makes mypy
+# evaluate numpy's bundled stub conditionals (sys.version_info >= (3, 12)) against the *running*
+# interpreter while checking syntax against the pinned target, so under a 3.12 host it enters a
+# 3.12-only `type` statement branch and then rejects it for not being 3.12. Leaving it unset lets
+# mypy infer the target from whichever interpreter invoked it, which matches every CI leg.
 warn_unused_configs = true
 ignore_missing_imports = true
 disallow_untyped_defs = false
