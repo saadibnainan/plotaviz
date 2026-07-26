@@ -216,3 +216,36 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---- PlotaViz additions ----
+# Build artifacts
+build/
+dist/
+*.spec
+*.app/
+*.AppImage
+*.dmg
+
+# Environments
+.venv/
+venv/
+
+# Secrets — never commit
+.env
+.env.*
+config/secrets.*
+*.key
+
+# App state
+*.pviz
+output/
+.plotaviz_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Local build notes — not part of the published repo
+plotaviz-claude-code-prompt.md
+repo-setup-checklist.md

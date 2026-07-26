@@ -1,0 +1,674 @@
+[
+  {
+    "city": "BAN-City-01",
+    "country": "Bangladesh",
+    "population": 600663,
+    "area_km2": 962.1,
+    "founded": 1224
+  },
+  {
+    "city": "BAN-City-02",
+    "country": "Bangladesh",
+    "population": 1765260,
+    "area_km2": 1820.2,
+    "founded": 1667
+  },
+  {
+    "city": "BAN-City-03",
+    "country": "Bangladesh",
+    "population": 476333,
+    "area_km2": 1197.3,
+    "founded": 1235
+  },
+  {
+    "city": "BAN-City-04",
+    "country": "Bangladesh",
+    "population": 1332409,
+    "area_km2": 697.9,
+    "founded": 1256
+  },
+  {
+    "city": "BAN-City-05",
+    "country": "Bangladesh",
+    "population": 1591211,
+    "area_km2": 366.7,
+    "founded": 1395
+  },
+  {
+    "city": "BAN-City-06",
+    "country": "Bangladesh",
+    "population": 84228,
+    "area_km2": 1260.9,
+    "founded": 1104
+  },
+  {
+    "city": "BAN-City-07",
+    "country": "Bangladesh",
+    "population": 792342,
+    "area_km2": 930.4,
+    "founded": 1331
+  },
+  {
+    "city": "BAN-City-08",
+    "country": "Bangladesh",
+    "population": 544583,
+    "area_km2": 1729.2,
+    "founded": 1843
+  },
+  {
+    "city": "BAN-City-09",
+    "country": "Bangladesh",
+    "population": 960103,
+    "area_km2": 577.5,
+    "founded": 1257
+  },
+  {
+    "city": "BAN-City-10",
+    "country": "Bangladesh",
+    "population": 1833152,
+    "area_km2": 1694.4,
+    "founded": 1298
+  },
+  {
+    "city": "BAN-City-11",
+    "country": "Bangladesh",
+    "population": 683883,
+    "area_km2": 1250.3,
+    "founded": 1563
+  },
+  {
+    "city": "BAN-City-12",
+    "country": "Bangladesh",
+    "population": 1310774,
+    "area_km2": 1260.0,
+    "founded": 1472
+  },
+  {
+    "city": "IND-City-01",
+    "country": "India",
+    "population": 338092,
+    "area_km2": 1830.4,
+    "founded": 1892
+  },
+  {
+    "city": "IND-City-02",
+    "country": "India",
+    "population": 4342189,
+    "area_km2": 2287.8,
+    "founded": 1483
+  },
+  {
+    "city": "IND-City-03",
+    "country": "India",
+    "population": 353915,
+    "area_km2": 531.7,
+    "founded": 1723
+  },
+  {
+    "city": "IND-City-04",
+    "country": "India",
+    "population": 2615647,
+    "area_km2": 557.6,
+    "founded": 1785
+  },
+  {
+    "city": "IND-City-05",
+    "country": "India",
+    "population": 3379684,
+    "area_km2": 809.3,
+    "founded": 1671
+  },
+  {
+    "city": "IND-City-06",
+    "country": "India",
+    "population": 800939,
+    "area_km2": 454.2,
+    "founded": 1459
+  },
+  {
+    "city": "IND-City-07",
+    "country": "India",
+    "population": 691765,
+    "area_km2": 276.7,
+    "founded": 1471
+  },
+  {
+    "city": "IND-City-08",
+    "country": "India",
+    "population": 1026628,
+    "area_km2": 1547.9,
+    "founded": 1811
+  },
+  {
+    "city": "IND-City-09",
+    "country": "India",
+    "population": 1299903,
+    "area_km2": 871.9,
+    "founded": 1565
+  },
+  {
+    "city": "IND-City-10",
+    "country": "India",
+    "population": 2136106,
+    "area_km2": 1411.0,
+    "founded": 1887
+  },
+  {
+    "city": "IND-City-11",
+    "country": "India",
+    "population": 1513881,
+    "area_km2": 1002.2,
+    "founded": 1234
+  },
+  {
+    "city": "IND-City-12",
+    "country": "India",
+    "population": 750150,
+    "area_km2": 1786.4,
+    "founded": 1863
+  },
+  {
+    "city": "NIG-City-01",
+    "country": "Nigeria",
+    "population": 449406,
+    "area_km2": 1246.0,
+    "founded": 1438
+  },
+  {
+    "city": "NIG-City-02",
+    "country": "Nigeria",
+    "population": 670294,
+    "area_km2": 2209.7,
+    "founded": 1419
+  },
+  {
+    "city": "NIG-City-03",
+    "country": "Nigeria",
+    "population": 202075,
+    "area_km2": 86.5,
+    "founded": 1348
+  },
+  {
+    "city": "NIG-City-04",
+    "country": "Nigeria",
+    "population": 186573,
+    "area_km2": 872.0,
+    "founded": 1660
+  },
+  {
+    "city": "NIG-City-05",
+    "country": "Nigeria",
+    "population": 207132,
+    "area_km2": 703.6,
+    "founded": 1637
+  },
+  {
+    "city": "NIG-City-06",
+    "country": "Nigeria",
+    "population": 794107,
+    "area_km2": 1949.7,
+    "founded": 1502
+  },
+  {
+    "city": "NIG-City-07",
+    "country": "Nigeria",
+    "population": 5289784,
+    "area_km2": 251.0,
+    "founded": 1177
+  },
+  {
+    "city": "NIG-City-08",
+    "country": "Nigeria",
+    "population": 1790362,
+    "area_km2": 1853.5,
+    "founded": 1809
+  },
+  {
+    "city": "NIG-City-09",
+    "country": "Nigeria",
+    "population": 1049527,
+    "area_km2": 1524.4,
+    "founded": 1235
+  },
+  {
+    "city": "NIG-City-10",
+    "country": "Nigeria",
+    "population": 294794,
+    "area_km2": 380.1,
+    "founded": 1926
+  },
+  {
+    "city": "NIG-City-11",
+    "country": "Nigeria",
+    "population": 667767,
+    "area_km2": 2382.7,
+    "founded": 1349
+  },
+  {
+    "city": "NIG-City-12",
+    "country": "Nigeria",
+    "population": 1076650,
+    "area_km2": 1331.2,
+    "founded": 1156
+  },
+  {
+    "city": "BRA-City-01",
+    "country": "Brazil",
+    "population": 1039632,
+    "area_km2": 78.1,
+    "founded": 1446
+  },
+  {
+    "city": "BRA-City-02",
+    "country": "Brazil",
+    "population": 537923,
+    "area_km2": 1056.0,
+    "founded": 1972
+  },
+  {
+    "city": "BRA-City-03",
+    "country": "Brazil",
+    "population": 443363,
+    "area_km2": 73.7,
+    "founded": 1761
+  },
+  {
+    "city": "BRA-City-04",
+    "country": "Brazil",
+    "population": 1218731,
+    "area_km2": 2203.5,
+    "founded": 1613
+  },
+  {
+    "city": "BRA-City-05",
+    "country": "Brazil",
+    "population": 244131,
+    "area_km2": 1300.5,
+    "founded": 1762
+  },
+  {
+    "city": "BRA-City-06",
+    "country": "Brazil",
+    "population": 151695,
+    "area_km2": 1073.5,
+    "founded": 1364
+  },
+  {
+    "city": "BRA-City-07",
+    "country": "Brazil",
+    "population": 1034578,
+    "area_km2": 1847.7,
+    "founded": 1818
+  },
+  {
+    "city": "BRA-City-08",
+    "country": "Brazil",
+    "population": 840852,
+    "area_km2": 1430.0,
+    "founded": 1793
+  },
+  {
+    "city": "BRA-City-09",
+    "country": "Brazil",
+    "population": 914636,
+    "area_km2": 1930.9,
+    "founded": 1941
+  },
+  {
+    "city": "BRA-City-10",
+    "country": "Brazil",
+    "population": 525547,
+    "area_km2": 2093.0,
+    "founded": 1831
+  },
+  {
+    "city": "BRA-City-11",
+    "country": "Brazil",
+    "population": 6013187,
+    "area_km2": 928.5,
+    "founded": 1303
+  },
+  {
+    "city": "BRA-City-12",
+    "country": "Brazil",
+    "population": 382925,
+    "area_km2": 963.2,
+    "founded": 1729
+  },
+  {
+    "city": "GER-City-01",
+    "country": "Germany",
+    "population": 1048899,
+    "area_km2": 1530.6,
+    "founded": 1528
+  },
+  {
+    "city": "GER-City-02",
+    "country": "Germany",
+    "population": 943935,
+    "area_km2": 1259.4,
+    "founded": 1649
+  },
+  {
+    "city": "GER-City-03",
+    "country": "Germany",
+    "population": 642547,
+    "area_km2": 1266.0,
+    "founded": 1740
+  },
+  {
+    "city": "GER-City-04",
+    "country": "Germany",
+    "population": 728295,
+    "area_km2": 952.0,
+    "founded": 1282
+  },
+  {
+    "city": "GER-City-05",
+    "country": "Germany",
+    "population": 83330,
+    "area_km2": 713.9,
+    "founded": 1592
+  },
+  {
+    "city": "GER-City-06",
+    "country": "Germany",
+    "population": 470761,
+    "area_km2": 2197.2,
+    "founded": 1581
+  },
+  {
+    "city": "GER-City-07",
+    "country": "Germany",
+    "population": 1212296,
+    "area_km2": 1427.2,
+    "founded": 1344
+  },
+  {
+    "city": "GER-City-08",
+    "country": "Germany",
+    "population": 228786,
+    "area_km2": 1731.8,
+    "founded": 1217
+  },
+  {
+    "city": "GER-City-09",
+    "country": "Germany",
+    "population": 124891,
+    "area_km2": 2172.2,
+    "founded": 1903
+  },
+  {
+    "city": "GER-City-10",
+    "country": "Germany",
+    "population": 182117,
+    "area_km2": 801.4,
+    "founded": 1358
+  },
+  {
+    "city": "GER-City-11",
+    "country": "Germany",
+    "population": 831046,
+    "area_km2": 667.4,
+    "founded": 1575
+  },
+  {
+    "city": "GER-City-12",
+    "country": "Germany",
+    "population": 868935,
+    "area_km2": 1210.5,
+    "founded": 1252
+  },
+  {
+    "city": "JAP-City-01",
+    "country": "Japan",
+    "population": 802567,
+    "area_km2": 447.3,
+    "founded": 1224
+  },
+  {
+    "city": "JAP-City-02",
+    "country": "Japan",
+    "population": 10439017,
+    "area_km2": 1440.1,
+    "founded": 1689
+  },
+  {
+    "city": "JAP-City-03",
+    "country": "Japan",
+    "population": 122483,
+    "area_km2": 1415.5,
+    "founded": 1357
+  },
+  {
+    "city": "JAP-City-04",
+    "country": "Japan",
+    "population": 121121,
+    "area_km2": 992.3,
+    "founded": 1892
+  },
+  {
+    "city": "JAP-City-05",
+    "country": "Japan",
+    "population": 259130,
+    "area_km2": 306.5,
+    "founded": 1615
+  },
+  {
+    "city": "JAP-City-06",
+    "country": "Japan",
+    "population": 208248,
+    "area_km2": 1825.1,
+    "founded": 1978
+  },
+  {
+    "city": "JAP-City-07",
+    "country": "Japan",
+    "population": 57287,
+    "area_km2": 2340.8,
+    "founded": 1353
+  },
+  {
+    "city": "JAP-City-08",
+    "country": "Japan",
+    "population": 3077607,
+    "area_km2": 1283.6,
+    "founded": 1315
+  },
+  {
+    "city": "JAP-City-09",
+    "country": "Japan",
+    "population": 628451,
+    "area_km2": 1958.8,
+    "founded": 1675
+  },
+  {
+    "city": "JAP-City-10",
+    "country": "Japan",
+    "population": 356560,
+    "area_km2": 2253.5,
+    "founded": 1804
+  },
+  {
+    "city": "JAP-City-11",
+    "country": "Japan",
+    "population": 700209,
+    "area_km2": 1960.0,
+    "founded": 1461
+  },
+  {
+    "city": "JAP-City-12",
+    "country": "Japan",
+    "population": 1468370,
+    "area_km2": 506.6,
+    "founded": 1667
+  },
+  {
+    "city": "MEX-City-01",
+    "country": "Mexico",
+    "population": 435574,
+    "area_km2": 945.3,
+    "founded": 1606
+  },
+  {
+    "city": "MEX-City-02",
+    "country": "Mexico",
+    "population": 184038,
+    "area_km2": 2051.6,
+    "founded": 1725
+  },
+  {
+    "city": "MEX-City-03",
+    "country": "Mexico",
+    "population": 178953,
+    "area_km2": 1374.1,
+    "founded": 1264
+  },
+  {
+    "city": "MEX-City-04",
+    "country": "Mexico",
+    "population": 547893,
+    "area_km2": 243.3,
+    "founded": 1764
+  },
+  {
+    "city": "MEX-City-05",
+    "country": "Mexico",
+    "population": 250353,
+    "area_km2": 335.9,
+    "founded": 1868
+  },
+  {
+    "city": "MEX-City-06",
+    "country": "Mexico",
+    "population": 1077772,
+    "area_km2": 1834.8,
+    "founded": 1948
+  },
+  {
+    "city": "MEX-City-07",
+    "country": "Mexico",
+    "population": 605267,
+    "area_km2": 988.2,
+    "founded": 1117
+  },
+  {
+    "city": "MEX-City-08",
+    "country": "Mexico",
+    "population": 1177257,
+    "area_km2": 240.8,
+    "founded": 1375
+  },
+  {
+    "city": "MEX-City-09",
+    "country": "Mexico",
+    "population": 542750,
+    "area_km2": 1198.7,
+    "founded": 1837
+  },
+  {
+    "city": "MEX-City-10",
+    "country": "Mexico",
+    "population": 204021,
+    "area_km2": 2384.2,
+    "founded": 1141
+  },
+  {
+    "city": "MEX-City-11",
+    "country": "Mexico",
+    "population": 873892,
+    "area_km2": 847.9,
+    "founded": 1830
+  },
+  {
+    "city": "MEX-City-12",
+    "country": "Mexico",
+    "population": 759071,
+    "area_km2": 1264.9,
+    "founded": 1542
+  },
+  {
+    "city": "EGY-City-01",
+    "country": "Egypt",
+    "population": 105630,
+    "area_km2": 494.8,
+    "founded": 1372
+  },
+  {
+    "city": "EGY-City-02",
+    "country": "Egypt",
+    "population": 807638,
+    "area_km2": 1072.1,
+    "founded": 1789
+  },
+  {
+    "city": "EGY-City-03",
+    "country": "Egypt",
+    "population": 69936,
+    "area_km2": 860.5,
+    "founded": 1932
+  },
+  {
+    "city": "EGY-City-04",
+    "country": "Egypt",
+    "population": 1114185,
+    "area_km2": 677.8,
+    "founded": 1424
+  },
+  {
+    "city": "EGY-City-05",
+    "country": "Egypt",
+    "population": 571671,
+    "area_km2": 1757.3,
+    "founded": 1895
+  },
+  {
+    "city": "EGY-City-06",
+    "country": "Egypt",
+    "population": 866946,
+    "area_km2": 2359.0,
+    "founded": 1436
+  },
+  {
+    "city": "EGY-City-07",
+    "country": "Egypt",
+    "population": 952112,
+    "area_km2": 852.2,
+    "founded": 1755
+  },
+  {
+    "city": "EGY-City-08",
+    "country": "Egypt",
+    "population": 539915,
+    "area_km2": 334.4,
+    "founded": 1256
+  },
+  {
+    "city": "EGY-City-09",
+    "country": "Egypt",
+    "population": 200426,
+    "area_km2": 1555.0,
+    "founded": 1577
+  },
+  {
+    "city": "EGY-City-10",
+    "country": "Egypt",
+    "population": 436412,
+    "area_km2": 1652.6,
+    "founded": 1964
+  },
+  {
+    "city": "EGY-City-11",
+    "country": "Egypt",
+    "population": 672361,
+    "area_km2": 1661.7,
+    "founded": 1180
+  },
+  {
+    "city": "EGY-City-12",
+    "country": "Egypt",
+    "population": 4429013,
+    "area_km2": 1667.6,
+    "founded": 1830
+  }
+]

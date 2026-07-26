@@ -1,0 +1,190 @@
+# PlotaViz chart selection rules.
+#
+# This file is the editable half of the selection engine. `selector.py` reads it, matches each
+# rule against the dataset's role counts, expands the column placeholders into concrete chart
+# specs, and then scores them. Adding a chart usually means adding a rule here, not writing code.
+#
+# Placeholder syntax in `map`:
+#   numeric.0        the first numeric column, numeric.1 the second, and so on
+#   categorical.0    likewise for categorical / datetime / boolean / text
+#   ?categorical.0   optional — the candidate is still produced if no such column exists
+#
+# Columns are ordered by usefulness (identifiers excluded, low-missing and low-cardinality
+# first), so `.0` means "the most promising column of that role".
+
+version: 1
+
+scoring:
+  # Readability caps. Charts exceeding these are penalized, not forbidden — the top-N option in
+  # the plotter can often rescue them.
+  max_bar_categories: 30
+  max_pie_categories: 6
+  max_grouped_series: 8
+  max_treemap_categories: 200
+  ideal_hist_rows: 30
+
+  weights:
+    # Multiplied by the normalized signal and added to the base score.
+    cardinality_penalty: 0.35 # categories beyond the cap
+    missing_penalty: 0.25 # fraction of missing values in the mapped columns
+    correlation_bonus: 0.25 # |r| for scatter-type charts
+    skew_bonus: 0.15 # skewed numerics favour box/violin and log scales
+    timespan_bonus: 0.18 # a wide, well-populated date range favours time series
+    identifier_penalty: 0.60 # mapping an identifier column is almost always wrong
+    constant_penalty: 0.50 # a single-valued column carries no information
+
+rules:
+  # ---- one numeric column ------------------------------------------------
+  - name: single_numeric
+    requires: { numeric: 1 }
+    candidates:
+      - chart: histogram
+        base: 0.88
+        map: { x: numeric.0 }
+        why: "One numeric column, so a histogram shows how its values are distributed."
+      - chart: kde
+        base: 0.62
+        map: { x: numeric.0 }
+        why: "A density curve smooths the distribution and reads well for continuous values."
+      - chart: box
+        base: 0.55
+        map: { x: "?categorical.0", y: numeric.0 }
+        why: "A box plot summarizes spread and exposes outliers at a glance."
+
+  # ---- one categorical column --------------------------------------------
+  - name: single_categorical
+    requires: { categorical: 1 }
+    candidates:
+      - chart: bar
+        base: 0.85
+        map: { x: categorical.0 }
+        agg: count
+        why: "One categorical column, so a bar chart of counts compares the groups directly."
+      - chart: treemap
+        base: 0.45
+        map: { x: categorical.0 }
+        agg: count
+        why: "With many categories a treemap stays readable where a bar chart would not."
+      - chart: pie
+        base: 0.30
+        map: { x: categorical.0 }
+        agg: count
+        why: "A pie chart works for a handful of categories that make up a whole."
+
+  # ---- two numeric columns ------------------------------------------------
+  - name: numeric_pair
+    requires: { numeric: 2 }
+    candidates:
+      - chart: scatter
+        base: 0.78
+        map: { x: numeric.0, y: numeric.1, color: "?categorical.0" }
+        options: { trendline: true }
+        why: "Two numeric columns, so a scatter plot shows how they relate."
+
+  # ---- numeric by category ------------------------------------------------
+  - name: numeric_by_category
+    requires: { numeric: 1, categorical: 1 }
+    candidates:
+      - chart: bar
+        base: 0.86
+        map: { x: categorical.0, y: numeric.0 }
+        agg: mean
+        why: "Comparing an average measure across categories is what a bar chart is for."
+      - chart: box
+        base: 0.80
+        map: { x: categorical.0, y: numeric.0 }
+        why: "A box plot compares the full distribution per category, not just the average."
+      - chart: violin
+        base: 0.66
+        map: { x: categorical.0, y: numeric.0 }
+        why: "A violin plot shows the shape of each category's distribution, including modes."
+
+  # ---- time series --------------------------------------------------------
+  - name: datetime_numeric
+    requires: { datetime: 1, numeric: 1 }
+    candidates:
+      - chart: line
+        base: 0.94
+        map: { x: datetime.0, y: numeric.0, color: "?categorical.0" }
+        why: "A date column paired with a measure is a time series, which a line chart shows best."
+      - chart: area
+        base: 0.68
+        map: { x: datetime.0, y: numeric.0 }
+        why: "An area chart emphasises cumulative magnitude over the same period."
+      - chart: scatter
+        base: 0.40
+        map: { x: datetime.0, y: numeric.0 }
+        why: "Plotting points without connecting them suits irregular or sparse events."
+
+  # ---- two categorical columns -------------------------------------------
+  - name: categorical_pair
+    requires: { categorical: 2 }
+    candidates:
+      - chart: grouped_bar
+        base: 0.78
+        map: { x: categorical.0, color: categorical.1 }
+        agg: count
+        why: "Two categorical columns compare cleanly as grouped bars."
+      - chart: stacked_bar
+        base: 0.64
+        map: { x: categorical.0, color: categorical.1 }
+        agg: count
+        options: { stacked: true }
+        why: "Stacking shows each group's composition as well as its total."
+      - chart: heatmap
+        base: 0.60
+        map: { x: categorical.0, y: categorical.1 }
+        agg: count
+        why: "A heatmap handles the cross-tabulation when either column has many values."
+
+  - name: categorical_pair_measure
+    requires: { categorical: 2, numeric: 1 }
+    candidates:
+      - chart: grouped_bar
+        base: 0.82
+        map: { x: categorical.0, y: numeric.0, color: categorical.1 }
+        agg: mean
+        why: "A measure split across two categorical dimensions reads well as grouped bars."
+      - chart: heatmap
+        base: 0.70
+        map: { x: categorical.0, y: categorical.1, color: numeric.0 }
+        agg: mean
+        why: "A heatmap shows the measure across every combination of the two dimensions."
+
+  # ---- many numeric columns ----------------------------------------------
+  - name: many_numeric
+    requires: { numeric: 3 }
+    candidates:
+      - chart: correlation_heatmap
+        base: 0.76
+        map: {}
+        why: "With several numeric columns, a correlation matrix surfaces the relationships worth plotting."
+      - chart: pair_plot
+        base: 0.50
+        map: {}
+        why: "A pair plot shows every pairwise relationship at once, at the cost of density."
+
+  # ---- boolean ------------------------------------------------------------
+  - name: boolean_split
+    requires: { boolean: 1, numeric: 1 }
+    candidates:
+      - chart: box
+        base: 0.72
+        map: { x: boolean.0, y: numeric.0 }
+        why: "A boolean flag splits the measure into two groups worth comparing side by side."
+      - chart: bar
+        base: 0.60
+        map: { x: boolean.0, y: numeric.0 }
+        agg: mean
+        why: "Comparing the average on each side of a true/false split."
+
+  # ---- fallback -----------------------------------------------------------
+  - name: text_only
+    requires: { text: 1 }
+    candidates:
+      - chart: bar
+        base: 0.25
+        map: { x: text.0 }
+        agg: count
+        options: { top_n: 20 }
+        why: "Only free-text columns are available, so the most frequent values are shown as counts."

@@ -1,0 +1,901 @@
+respondent_id,department,satisfaction,tenure_years,would_recommend,seat_count,comment
+R00001,Engineering,Satisfied,4.3,True,33,Too slow on large files
+R00002,Support,Dissatisfied,0.7,True,21,
+R00003,Design,Very satisfied,4.8,True,33,Love the export options
+R00004,Engineering,Very satisfied,4.5,False,14,
+R00005,Engineering,Satisfied,2.2,True,16,Too slow on large files
+R00006,Engineering,Satisfied,2.3,False,31,
+R00007,Engineering,Neutral,3.4,False,30,Love the export options
+R00008,Support,Neutral,3.2,True,4,Needs better reporting
+R00009,Engineering,Satisfied,1.7,True,36,Works well for our team
+R00010,Sales,Satisfied,2.6,True,17,Works well for our team
+R00011,Sales,Neutral,1.3,False,8,
+R00012,Engineering,Satisfied,1.2,True,21,
+R00013,Operations,Very satisfied,5.3,False,38,Onboarding was confusing
+R00014,Support,Neutral,2.1,True,7,
+R00015,Support,Dissatisfied,0.8,True,14,Works well for our team
+R00016,Sales,Neutral,0.8,True,10,Works well for our team
+R00017,Design,Very satisfied,1.7,True,3,
+R00018,Finance,Very satisfied,1.2,True,33,Love the export options
+R00019,Sales,Satisfied,,False,15,Works well for our team
+R00020,Operations,Neutral,0.9,True,15,Needs better reporting
+R00021,Engineering,Satisfied,2.4,True,6,Too slow on large files
+R00022,Sales,Neutral,2.0,True,32,Onboarding was confusing
+R00023,Engineering,Very satisfied,4.2,True,24,Needs better reporting
+R00024,Finance,Very satisfied,3.3,False,19,Needs better reporting
+R00025,Operations,Satisfied,6.1,False,34,Too slow on large files
+R00026,Engineering,Neutral,4.6,True,11,Works well for our team
+R00027,Finance,Very satisfied,4.2,True,18,Works well for our team
+R00028,Support,Very dissatisfied,3.1,False,18,Too slow on large files
+R00029,Finance,Very dissatisfied,3.2,True,3,
+R00030,Support,Satisfied,2.7,True,10,Needs better reporting
+R00031,Sales,Neutral,5.3,True,29,Works well for our team
+R00032,Sales,Neutral,2.4,True,37,Onboarding was confusing
+R00033,Support,Neutral,0.6,True,18,Works well for our team
+R00034,Sales,Very dissatisfied,2.8,True,5,Needs better reporting
+R00035,Engineering,Satisfied,7.4,False,33,Needs better reporting
+R00036,Operations,Neutral,5.0,True,29,Too slow on large files
+R00037,Sales,Very satisfied,10.1,True,3,Too slow on large files
+R00038,Sales,Dissatisfied,3.9,False,10,Too slow on large files
+R00039,Engineering,Satisfied,,False,21,Love the export options
+R00040,Engineering,Neutral,4.5,True,24,Needs better reporting
+R00041,Sales,Very dissatisfied,7.8,True,8,Works well for our team
+R00042,Design,Satisfied,2.6,True,3,Love the export options
+R00043,Support,Very dissatisfied,4.1,True,17,
+R00044,Support,Dissatisfied,7.7,False,24,Needs better reporting
+R00045,Sales,Neutral,1.6,True,16,Works well for our team
+R00046,Operations,Satisfied,1.6,True,8,Too slow on large files
+R00047,Support,Very dissatisfied,6.9,True,35,Love the export options
+R00048,Engineering,Dissatisfied,11.3,True,22,
+R00049,Support,Very dissatisfied,2.0,False,14,
+R00050,Support,Very satisfied,5.4,True,36,Onboarding was confusing
+R00051,Sales,Very satisfied,2.9,False,20,Onboarding was confusing
+R00052,Engineering,Very satisfied,3.5,False,35,Needs better reporting
+R00053,Finance,Neutral,4.3,False,8,
+R00054,Engineering,Satisfied,3.5,True,12,Works well for our team
+R00055,Design,Satisfied,1.8,False,12,Too slow on large files
+R00056,Operations,Dissatisfied,4.8,True,33,Works well for our team
+R00057,Support,Neutral,4.5,False,19,Needs better reporting
+R00058,Finance,Dissatisfied,1.2,True,12,Onboarding was confusing
+R00059,Support,Dissatisfied,3.9,False,23,Needs better reporting
+R00060,Finance,Satisfied,2.4,True,39,Needs better reporting
+R00061,Engineering,Neutral,2.3,False,31,Works well for our team
+R00062,Design,Satisfied,2.4,False,36,Too slow on large files
+R00063,Engineering,Satisfied,2.0,True,11,Needs better reporting
+R00064,Support,Dissatisfied,1.4,False,24,Love the export options
+R00065,Engineering,Neutral,4.6,True,28,
+R00066,Engineering,Neutral,6.9,True,2,
+R00067,Engineering,Satisfied,2.1,True,12,Works well for our team
+R00068,Operations,Neutral,,False,20,Needs better reporting
+R00069,Engineering,Very satisfied,3.0,True,22,Works well for our team
+R00070,Engineering,Satisfied,5.2,True,24,Onboarding was confusing
+R00071,Support,Dissatisfied,4.4,True,23,Works well for our team
+R00072,Support,Neutral,0.7,False,13,Works well for our team
+R00073,Operations,Very satisfied,2.5,True,11,Too slow on large files
+R00074,Operations,Very dissatisfied,1.8,True,16,
+R00075,Support,Very dissatisfied,1.8,False,36,Too slow on large files
+R00076,Operations,Satisfied,,False,21,Needs better reporting
+R00077,Engineering,Neutral,0.7,True,14,
+R00078,Sales,Satisfied,4.3,False,26,Works well for our team
+R00079,Support,Dissatisfied,3.6,False,29,
+R00080,Finance,Dissatisfied,7.0,True,38,Too slow on large files
+R00081,Finance,Very satisfied,7.0,False,33,Love the export options
+R00082,Engineering,Very satisfied,2.5,True,16,Works well for our team
+R00083,Operations,Dissatisfied,1.2,True,11,Love the export options
+R00084,Operations,Very satisfied,4.3,True,6,Needs better reporting
+R00085,Engineering,Very satisfied,13.0,False,20,
+R00086,Sales,Dissatisfied,3.6,True,36,Too slow on large files
+R00087,Operations,Satisfied,5.4,True,26,Love the export options
+R00088,Operations,Satisfied,2.2,True,7,Works well for our team
+R00089,Sales,Neutral,12.5,True,19,Too slow on large files
+R00090,Engineering,Very satisfied,5.5,True,21,
+R00091,Support,Satisfied,6.3,True,18,Too slow on large files
+R00092,Engineering,Very dissatisfied,9.0,True,30,Works well for our team
+R00093,Finance,Satisfied,3.2,True,32,Onboarding was confusing
+R00094,Sales,Satisfied,1.3,True,34,Works well for our team
+R00095,Engineering,Satisfied,0.8,True,22,Works well for our team
+R00096,Design,Satisfied,1.5,True,11,Needs better reporting
+R00097,Engineering,Satisfied,1.5,True,1,Needs better reporting
+R00098,Engineering,Very satisfied,0.9,True,4,Love the export options
+R00099,Support,Satisfied,2.3,False,21,Needs better reporting
+R00100,Sales,Dissatisfied,4.2,True,12,Love the export options
+R00101,Support,Very dissatisfied,2.6,True,32,Needs better reporting
+R00102,Operations,Very satisfied,0.6,True,38,
+R00103,Design,Satisfied,1.9,True,34,Needs better reporting
+R00104,Engineering,Neutral,1.8,True,2,Too slow on large files
+R00105,Engineering,Very satisfied,2.2,False,20,Onboarding was confusing
+R00106,Design,Very satisfied,0.1,True,30,Too slow on large files
+R00107,Sales,Dissatisfied,1.0,True,34,
+R00108,Support,Neutral,6.0,True,2,Love the export options
+R00109,Operations,Very satisfied,3.9,True,21,
+R00110,Engineering,Very satisfied,3.7,True,20,
+R00111,Finance,Dissatisfied,1.3,False,25,Onboarding was confusing
+R00112,Support,Satisfied,0.3,False,4,Works well for our team
+R00113,Sales,Satisfied,2.3,False,16,Works well for our team
+R00114,Finance,Satisfied,4.9,False,32,Needs better reporting
+R00115,Engineering,Very satisfied,2.6,True,5,Too slow on large files
+R00116,Engineering,Very satisfied,3.9,True,32,Works well for our team
+R00117,Engineering,Very satisfied,6.7,False,30,Too slow on large files
+R00118,Engineering,Satisfied,2.6,False,5,Onboarding was confusing
+R00119,Support,Very satisfied,0.9,True,30,Works well for our team
+R00120,Design,Satisfied,4.9,True,14,Works well for our team
+R00121,Sales,Very satisfied,2.3,True,7,
+R00122,Operations,Very satisfied,6.3,True,25,Works well for our team
+R00123,Engineering,Satisfied,0.6,True,12,Needs better reporting
+R00124,Engineering,Dissatisfied,2.9,True,32,Works well for our team
+R00125,Design,Dissatisfied,3.1,True,37,Onboarding was confusing
+R00126,Finance,Satisfied,4.1,True,28,Works well for our team
+R00127,Engineering,Very satisfied,4.2,False,38,Love the export options
+R00128,Support,Neutral,0.5,True,29,Needs better reporting
+R00129,Finance,Dissatisfied,2.0,True,14,Onboarding was confusing
+R00130,Operations,Dissatisfied,5.7,True,29,Needs better reporting
+R00131,Support,Satisfied,1.7,True,39,Needs better reporting
+R00132,Design,Very satisfied,7.1,True,39,
+R00133,Sales,Very satisfied,3.5,True,33,
+R00134,Support,Satisfied,0.5,True,16,
+R00135,Engineering,Satisfied,1.1,True,36,Too slow on large files
+R00136,Support,Dissatisfied,1.8,True,8,Love the export options
+R00137,Support,Satisfied,5.9,False,13,Love the export options
+R00138,Design,Satisfied,1.9,True,14,Works well for our team
+R00139,Operations,Satisfied,3.1,True,18,Works well for our team
+R00140,Engineering,Very satisfied,6.7,True,29,Love the export options
+R00141,Support,Very satisfied,4.5,True,16,Too slow on large files
+R00142,Engineering,Satisfied,2.9,True,19,Love the export options
+R00143,Operations,Neutral,1.8,True,15,Works well for our team
+R00144,Design,Neutral,2.3,False,25,Too slow on large files
+R00145,Sales,Dissatisfied,0.8,True,38,
+R00146,Sales,Neutral,5.0,True,20,Too slow on large files
+R00147,Operations,Very satisfied,3.7,False,7,Needs better reporting
+R00148,Sales,Dissatisfied,4.5,True,26,Works well for our team
+R00149,Sales,Very dissatisfied,1.4,False,38,Works well for our team
+R00150,Finance,Satisfied,3.4,False,28,Love the export options
+R00151,Sales,Satisfied,2.5,True,19,
+R00152,Sales,Very satisfied,0.9,True,39,Onboarding was confusing
+R00153,Support,Satisfied,,True,30,Love the export options
+R00154,Support,Very dissatisfied,4.9,True,13,Needs better reporting
+R00155,Engineering,Very satisfied,2.3,True,29,Onboarding was confusing
+R00156,Operations,Dissatisfied,2.3,True,19,
+R00157,Support,Dissatisfied,7.6,True,23,Love the export options
+R00158,Support,Dissatisfied,1.5,True,14,Too slow on large files
+R00159,Engineering,Satisfied,1.3,False,17,
+R00160,Engineering,Satisfied,9.0,False,15,
+R00161,Sales,Very satisfied,1.0,False,25,Onboarding was confusing
+R00162,Engineering,Neutral,9.4,False,1,Needs better reporting
+R00163,Operations,Neutral,1.5,True,21,
+R00164,Engineering,Very satisfied,2.3,False,14,Onboarding was confusing
+R00165,Finance,Dissatisfied,1.4,True,3,Too slow on large files
+R00166,Sales,Neutral,0.6,True,17,Too slow on large files
+R00167,Finance,Very satisfied,4.5,True,22,
+R00168,Operations,Very satisfied,2.0,True,26,
+R00169,Sales,Very dissatisfied,2.4,True,24,Love the export options
+R00170,Design,Neutral,5.7,True,35,Needs better reporting
+R00171,Design,Very satisfied,4.1,True,23,Works well for our team
+R00172,Support,Dissatisfied,1.3,True,31,Works well for our team
+R00173,Engineering,Satisfied,3.2,True,38,Too slow on large files
+R00174,Design,Satisfied,2.9,False,36,Needs better reporting
+R00175,Engineering,Satisfied,2.6,True,9,Works well for our team
+R00176,Design,Very satisfied,,True,17,Onboarding was confusing
+R00177,Finance,Dissatisfied,9.0,True,24,Love the export options
+R00178,Engineering,Neutral,3.9,True,6,Needs better reporting
+R00179,Support,Very dissatisfied,2.3,True,15,Works well for our team
+R00180,Engineering,Satisfied,,True,31,
+R00181,Sales,Dissatisfied,6.2,True,36,Needs better reporting
+R00182,Design,Satisfied,3.0,True,32,
+R00183,Operations,Neutral,0.8,True,24,Too slow on large files
+R00184,Engineering,Very satisfied,0.9,True,10,
+R00185,Engineering,Satisfied,1.4,False,39,Needs better reporting
+R00186,Design,Very satisfied,,False,33,
+R00187,Finance,Dissatisfied,1.9,True,27,Needs better reporting
+R00188,Sales,Neutral,3.5,False,28,Works well for our team
+R00189,Finance,Very satisfied,1.4,True,33,Too slow on large files
+R00190,Engineering,Satisfied,3.4,True,31,
+R00191,Engineering,Satisfied,2.4,False,1,Works well for our team
+R00192,Engineering,Neutral,2.0,True,9,Needs better reporting
+R00193,Operations,Neutral,1.1,False,29,Needs better reporting
+R00194,Support,Satisfied,,True,25,Too slow on large files
+R00195,Design,Satisfied,4.4,True,37,Too slow on large files
+R00196,Sales,Neutral,2.5,False,26,Needs better reporting
+R00197,Engineering,Very satisfied,,True,9,Love the export options
+R00198,Sales,Dissatisfied,3.0,False,20,Love the export options
+R00199,Design,Satisfied,2.2,True,27,
+R00200,Support,Dissatisfied,4.9,True,29,
+R00201,Engineering,Satisfied,2.3,True,14,
+R00202,Engineering,Satisfied,7.6,True,5,
+R00203,Finance,Dissatisfied,4.8,False,23,Too slow on large files
+R00204,Sales,Neutral,,True,4,Onboarding was confusing
+R00205,Sales,Dissatisfied,4.2,False,8,Onboarding was confusing
+R00206,Sales,Satisfied,1.6,True,25,Love the export options
+R00207,Engineering,Neutral,1.5,True,34,Works well for our team
+R00208,Sales,Dissatisfied,7.9,False,16,Too slow on large files
+R00209,Sales,Very satisfied,3.7,True,9,Onboarding was confusing
+R00210,Engineering,Neutral,4.5,True,17,Too slow on large files
+R00211,Engineering,Very satisfied,,True,28,
+R00212,Sales,Very dissatisfied,1.1,True,22,Onboarding was confusing
+R00213,Finance,Satisfied,1.0,False,31,Too slow on large files
+R00214,Operations,Neutral,2.2,True,12,Love the export options
+R00215,Sales,Dissatisfied,1.1,True,36,Too slow on large files
+R00216,Sales,Neutral,3.8,False,25,Love the export options
+R00217,Support,Neutral,2.4,True,31,Too slow on large files
+R00218,Operations,Neutral,3.0,True,5,Love the export options
+R00219,Support,Neutral,2.9,True,34,Love the export options
+R00220,Design,Neutral,0.4,True,14,Love the export options
+R00221,Sales,Neutral,1.2,True,38,Needs better reporting
+R00222,Sales,Very dissatisfied,2.7,True,11,Love the export options
+R00223,Finance,Neutral,2.8,True,25,Love the export options
+R00224,Engineering,Satisfied,,True,33,Too slow on large files
+R00225,Support,Dissatisfied,8.8,True,27,Love the export options
+R00226,Sales,Dissatisfied,2.3,True,21,
+R00227,Engineering,Satisfied,1.5,False,38,Works well for our team
+R00228,Sales,Very satisfied,0.5,True,15,Works well for our team
+R00229,Engineering,Satisfied,1.9,True,37,Works well for our team
+R00230,Operations,Neutral,0.6,False,3,Needs better reporting
+R00231,Engineering,Satisfied,7.7,False,22,Works well for our team
+R00232,Sales,Very satisfied,4.3,True,31,Needs better reporting
+R00233,Engineering,Very dissatisfied,6.3,True,14,Too slow on large files
+R00234,Operations,Very satisfied,,True,20,Onboarding was confusing
+R00235,Support,Satisfied,0.8,True,33,Works well for our team
+R00236,Engineering,Satisfied,4.4,True,12,Onboarding was confusing
+R00237,Operations,Neutral,5.0,True,29,Works well for our team
+R00238,Finance,Satisfied,0.6,True,4,Works well for our team
+R00239,Sales,Very satisfied,1.2,True,27,
+R00240,Engineering,Neutral,,False,14,Too slow on large files
+R00241,Support,Neutral,0.3,False,8,Works well for our team
+R00242,Finance,Very satisfied,2.0,True,38,Love the export options
+R00243,Finance,Satisfied,1.1,True,38,Onboarding was confusing
+R00244,Engineering,Very satisfied,2.5,True,5,
+R00245,Support,Dissatisfied,2.6,True,22,Onboarding was confusing
+R00246,Engineering,Satisfied,2.7,False,25,
+R00247,Sales,Satisfied,2.1,True,14,
+R00248,Sales,Satisfied,3.8,True,2,Onboarding was confusing
+R00249,Sales,Very satisfied,5.5,True,12,Needs better reporting
+R00250,Operations,Very satisfied,1.5,True,21,Needs better reporting
+R00251,Sales,Satisfied,9.9,True,18,Love the export options
+R00252,Support,Satisfied,8.6,True,8,Love the export options
+R00253,Engineering,Satisfied,4.7,True,17,
+R00254,Engineering,Very satisfied,1.4,True,3,Onboarding was confusing
+R00255,Engineering,Neutral,6.1,True,9,Too slow on large files
+R00256,Sales,Dissatisfied,3.5,True,36,Needs better reporting
+R00257,Support,Dissatisfied,1.0,True,10,Works well for our team
+R00258,Engineering,Neutral,1.6,True,20,Too slow on large files
+R00259,Design,Neutral,4.8,False,30,
+R00260,Engineering,Satisfied,2.9,True,7,Works well for our team
+R00261,Operations,Very dissatisfied,0.8,False,19,Too slow on large files
+R00262,Operations,Dissatisfied,2.0,False,30,Works well for our team
+R00263,Operations,Very satisfied,4.9,False,38,
+R00264,Operations,Dissatisfied,1.8,True,35,Needs better reporting
+R00265,Design,Satisfied,1.3,True,7,
+R00266,Engineering,Very satisfied,10.6,True,21,Needs better reporting
+R00267,Sales,Dissatisfied,6.8,True,28,Too slow on large files
+R00268,Design,Satisfied,0.7,True,15,Needs better reporting
+R00269,Engineering,Neutral,1.7,False,16,Works well for our team
+R00270,Sales,Very satisfied,3.8,False,9,
+R00271,Support,Satisfied,1.2,False,10,Love the export options
+R00272,Support,Dissatisfied,3.7,False,6,
+R00273,Sales,Satisfied,1.1,True,3,Too slow on large files
+R00274,Operations,Neutral,2.1,True,20,Onboarding was confusing
+R00275,Design,Satisfied,1.6,True,14,Works well for our team
+R00276,Support,Very dissatisfied,2.0,False,36,Love the export options
+R00277,Finance,Dissatisfied,4.1,False,19,Needs better reporting
+R00278,Engineering,Satisfied,5.6,True,30,
+R00279,Engineering,Very satisfied,0.9,True,39,
+R00280,Engineering,Satisfied,7.0,True,10,Works well for our team
+R00281,Engineering,Dissatisfied,2.0,False,30,Needs better reporting
+R00282,Engineering,Satisfied,1.7,True,27,Onboarding was confusing
+R00283,Operations,Satisfied,1.9,True,34,Too slow on large files
+R00284,Support,Dissatisfied,0.8,True,34,Needs better reporting
+R00285,Sales,Neutral,3.2,True,1,Needs better reporting
+R00286,Design,Satisfied,1.9,False,12,
+R00287,Finance,Dissatisfied,7.5,True,19,
+R00288,Finance,Neutral,,True,1,Too slow on large files
+R00289,Engineering,Very satisfied,2.4,True,10,Needs better reporting
+R00290,Sales,Neutral,2.9,True,35,
+R00291,Finance,Very satisfied,2.4,False,20,Too slow on large files
+R00292,Support,Very satisfied,0.5,False,22,Love the export options
+R00293,Design,Neutral,,True,35,Love the export options
+R00294,Sales,Neutral,4.1,True,1,
+R00295,Engineering,Satisfied,3.0,True,39,Too slow on large files
+R00296,Operations,Satisfied,0.8,True,15,Onboarding was confusing
+R00297,Support,Neutral,1.7,False,37,Needs better reporting
+R00298,Engineering,Satisfied,3.2,True,22,Love the export options
+R00299,Finance,Very satisfied,2.8,False,27,Onboarding was confusing
+R00300,Engineering,Very satisfied,6.5,False,29,Too slow on large files
+R00301,Operations,Satisfied,2.6,True,39,Love the export options
+R00302,Sales,Satisfied,2.9,True,29,Works well for our team
+R00303,Finance,Neutral,3.5,True,18,Too slow on large files
+R00304,Sales,Satisfied,1.7,True,17,Needs better reporting
+R00305,Sales,Neutral,5.0,True,22,Love the export options
+R00306,Operations,Satisfied,5.8,True,35,Needs better reporting
+R00307,Finance,Satisfied,4.7,True,19,Too slow on large files
+R00308,Sales,Very dissatisfied,2.9,True,19,Love the export options
+R00309,Finance,Satisfied,3.6,True,6,Needs better reporting
+R00310,Engineering,Satisfied,2.0,False,12,Too slow on large files
+R00311,Operations,Satisfied,1.1,True,17,Works well for our team
+R00312,Sales,Satisfied,3.2,False,38,
+R00313,Operations,Satisfied,2.1,True,11,
+R00314,Sales,Neutral,0.4,True,23,Love the export options
+R00315,Engineering,Very satisfied,3.2,False,33,Love the export options
+R00316,Finance,Neutral,4.8,False,21,Needs better reporting
+R00317,Operations,Very satisfied,3.7,False,20,Too slow on large files
+R00318,Sales,Neutral,0.8,False,3,Works well for our team
+R00319,Support,Neutral,1.3,True,4,
+R00320,Engineering,Satisfied,2.6,True,39,
+R00321,Engineering,Satisfied,1.2,True,6,Too slow on large files
+R00322,Operations,Satisfied,1.5,True,15,Needs better reporting
+R00323,Sales,Very dissatisfied,1.2,False,10,
+R00324,Operations,Dissatisfied,6.2,True,24,Too slow on large files
+R00325,Support,Dissatisfied,9.8,True,31,
+R00326,Finance,Very satisfied,1.1,True,8,Love the export options
+R00327,Operations,Satisfied,3.6,True,38,Works well for our team
+R00328,Finance,Dissatisfied,,True,34,Too slow on large files
+R00329,Engineering,Neutral,1.0,True,13,
+R00330,Finance,Very satisfied,1.4,True,12,Onboarding was confusing
+R00331,Design,Satisfied,2.3,True,16,Love the export options
+R00332,Engineering,Satisfied,1.9,True,2,
+R00333,Engineering,Dissatisfied,4.5,True,16,Onboarding was confusing
+R00334,Sales,Satisfied,4.0,True,18,Needs better reporting
+R00335,Sales,Satisfied,0.7,True,20,Love the export options
+R00336,Engineering,Satisfied,4.7,True,39,Needs better reporting
+R00337,Sales,Very satisfied,1.5,False,16,Love the export options
+R00338,Sales,Satisfied,9.7,True,26,Onboarding was confusing
+R00339,Support,Very satisfied,3.1,True,21,Love the export options
+R00340,Support,Satisfied,3.1,True,9,
+R00341,Engineering,Dissatisfied,8.4,True,18,
+R00342,Sales,Neutral,0.9,True,31,Needs better reporting
+R00343,Operations,Neutral,5.1,False,15,Works well for our team
+R00344,Engineering,Satisfied,3.3,True,15,Love the export options
+R00345,Support,Satisfied,5.3,True,6,Onboarding was confusing
+R00346,Sales,Satisfied,1.5,False,7,Too slow on large files
+R00347,Sales,Satisfied,1.3,True,35,Works well for our team
+R00348,Support,Neutral,,True,26,Too slow on large files
+R00349,Finance,Neutral,6.9,True,15,Needs better reporting
+R00350,Engineering,Satisfied,2.4,True,25,Onboarding was confusing
+R00351,Support,Neutral,4.0,True,23,
+R00352,Design,Satisfied,1.0,True,18,Needs better reporting
+R00353,Sales,Satisfied,2.6,True,36,Onboarding was confusing
+R00354,Sales,Very dissatisfied,0.6,True,26,Works well for our team
+R00355,Operations,Dissatisfied,2.3,True,21,Onboarding was confusing
+R00356,Sales,Very dissatisfied,1.6,False,39,Needs better reporting
+R00357,Support,Neutral,1.1,False,18,
+R00358,Engineering,Dissatisfied,2.1,False,10,Works well for our team
+R00359,Sales,Satisfied,4.2,True,7,
+R00360,Support,Neutral,1.9,True,14,Love the export options
+R00361,Support,Neutral,0.5,False,38,Too slow on large files
+R00362,Support,Neutral,2.8,False,29,
+R00363,Design,Satisfied,,True,5,Onboarding was confusing
+R00364,Sales,Dissatisfied,,True,32,Too slow on large files
+R00365,Engineering,Neutral,,False,6,Works well for our team
+R00366,Engineering,Very satisfied,3.1,False,16,Love the export options
+R00367,Sales,Neutral,9.1,True,11,Works well for our team
+R00368,Sales,Satisfied,4.1,False,35,Onboarding was confusing
+R00369,Sales,Very satisfied,2.6,True,16,Works well for our team
+R00370,Sales,Neutral,0.1,True,7,Needs better reporting
+R00371,Engineering,Very satisfied,0.3,False,10,Works well for our team
+R00372,Engineering,Satisfied,2.9,True,38,
+R00373,Engineering,Very dissatisfied,0.4,False,25,Onboarding was confusing
+R00374,Support,Satisfied,1.4,True,31,Love the export options
+R00375,Finance,Neutral,,True,8,Onboarding was confusing
+R00376,Engineering,Very satisfied,1.7,True,15,Love the export options
+R00377,Engineering,Very satisfied,3.5,True,23,
+R00378,Operations,Satisfied,0.9,True,13,Onboarding was confusing
+R00379,Design,Satisfied,0.1,True,33,
+R00380,Operations,Satisfied,1.8,True,6,Onboarding was confusing
+R00381,Design,Satisfied,1.6,True,30,Onboarding was confusing
+R00382,Operations,Satisfied,3.0,True,36,Needs better reporting
+R00383,Design,Very dissatisfied,1.7,True,35,
+R00384,Engineering,Satisfied,1.8,False,27,Works well for our team
+R00385,Finance,Satisfied,0.9,True,3,Works well for our team
+R00386,Sales,Very satisfied,0.3,True,4,Needs better reporting
+R00387,Operations,Very satisfied,8.6,True,32,
+R00388,Support,Very satisfied,5.3,True,35,Needs better reporting
+R00389,Finance,Very satisfied,,True,12,Works well for our team
+R00390,Sales,Very satisfied,4.4,True,12,Works well for our team
+R00391,Finance,Satisfied,5.8,False,15,
+R00392,Support,Dissatisfied,3.8,False,29,Needs better reporting
+R00393,Design,Satisfied,1.9,True,21,Needs better reporting
+R00394,Sales,Neutral,1.4,True,19,Needs better reporting
+R00395,Engineering,Satisfied,16.1,False,5,Works well for our team
+R00396,Support,Very satisfied,1.3,True,36,
+R00397,Finance,Dissatisfied,0.9,True,29,
+R00398,Finance,Dissatisfied,2.1,True,9,Onboarding was confusing
+R00399,Engineering,Very satisfied,7.1,True,11,Onboarding was confusing
+R00400,Engineering,Neutral,1.3,True,28,Needs better reporting
+R00401,Design,Dissatisfied,2.7,True,36,Onboarding was confusing
+R00402,Support,Dissatisfied,6.4,True,9,Works well for our team
+R00403,Support,Satisfied,6.5,False,8,Love the export options
+R00404,Sales,Very satisfied,2.2,True,19,Works well for our team
+R00405,Operations,Satisfied,14.1,False,2,Too slow on large files
+R00406,Engineering,Very satisfied,1.6,True,33,Works well for our team
+R00407,Sales,Very dissatisfied,1.6,True,7,Works well for our team
+R00408,Finance,Neutral,2.9,True,16,Works well for our team
+R00409,Sales,Satisfied,,False,14,Needs better reporting
+R00410,Support,Satisfied,4.7,True,17,
+R00411,Sales,Dissatisfied,7.4,True,5,Needs better reporting
+R00412,Sales,Satisfied,1.4,False,23,Works well for our team
+R00413,Sales,Dissatisfied,5.6,True,7,Works well for our team
+R00414,Engineering,Very satisfied,0.5,True,5,Needs better reporting
+R00415,Engineering,Satisfied,5.0,True,38,Onboarding was confusing
+R00416,Operations,Dissatisfied,7.1,True,8,
+R00417,Engineering,Neutral,6.6,True,11,Needs better reporting
+R00418,Design,Very satisfied,6.2,True,18,Too slow on large files
+R00419,Operations,Very satisfied,4.4,True,8,Love the export options
+R00420,Sales,Satisfied,1.0,True,1,Works well for our team
+R00421,Support,Satisfied,0.7,True,5,Onboarding was confusing
+R00422,Support,Neutral,4.9,True,21,Onboarding was confusing
+R00423,Engineering,Very satisfied,3.9,True,17,Works well for our team
+R00424,Support,Very satisfied,2.4,True,26,
+R00425,Sales,Neutral,1.8,True,17,Love the export options
+R00426,Design,Very satisfied,1.7,True,6,Works well for our team
+R00427,Support,Dissatisfied,2.8,True,35,Onboarding was confusing
+R00428,Design,Very satisfied,9.9,True,25,Works well for our team
+R00429,Sales,Very dissatisfied,9.5,True,16,Love the export options
+R00430,Support,Very satisfied,0.3,False,36,Needs better reporting
+R00431,Finance,Very satisfied,3.1,False,39,Works well for our team
+R00432,Sales,Neutral,2.7,True,33,Love the export options
+R00433,Engineering,Very satisfied,3.2,True,28,
+R00434,Sales,Dissatisfied,3.0,False,11,
+R00435,Sales,Very dissatisfied,4.7,False,35,
+R00436,Engineering,Very dissatisfied,3.8,False,35,
+R00437,Support,Dissatisfied,1.6,False,14,Love the export options
+R00438,Operations,Neutral,2.1,True,16,Works well for our team
+R00439,Operations,Satisfied,1.7,True,11,
+R00440,Finance,Satisfied,5.8,True,10,Onboarding was confusing
+R00441,Support,Dissatisfied,3.9,True,15,Works well for our team
+R00442,Engineering,Satisfied,4.3,True,26,
+R00443,Support,Neutral,2.6,True,22,Needs better reporting
+R00444,Operations,Very dissatisfied,3.5,True,13,Works well for our team
+R00445,Finance,Satisfied,5.3,True,3,Love the export options
+R00446,Support,Neutral,1.6,True,8,Needs better reporting
+R00447,Support,Very satisfied,2.6,True,9,Onboarding was confusing
+R00448,Sales,Neutral,2.7,True,39,Works well for our team
+R00449,Finance,Neutral,4.1,True,2,
+R00450,Operations,Very satisfied,4.5,False,10,Love the export options
+R00451,Operations,Neutral,4.1,True,26,Works well for our team
+R00452,Engineering,Very satisfied,1.1,True,21,
+R00453,Engineering,Satisfied,3.8,True,34,Too slow on large files
+R00454,Sales,Very satisfied,2.4,True,25,
+R00455,Sales,Satisfied,1.2,True,16,Works well for our team
+R00456,Design,Neutral,2.0,False,24,
+R00457,Engineering,Very dissatisfied,9.2,False,11,Love the export options
+R00458,Engineering,Neutral,2.6,True,9,Too slow on large files
+R00459,Support,Neutral,7.2,True,20,Onboarding was confusing
+R00460,Engineering,Satisfied,3.9,False,8,Love the export options
+R00461,Engineering,Very satisfied,0.4,True,22,Too slow on large files
+R00462,Sales,Very satisfied,4.8,True,5,Too slow on large files
+R00463,Sales,Very satisfied,0.5,True,7,
+R00464,Engineering,Satisfied,1.1,True,25,Works well for our team
+R00465,Finance,Neutral,4.4,True,13,Works well for our team
+R00466,Sales,Very satisfied,6.2,True,13,
+R00467,Operations,Very satisfied,0.5,False,31,Onboarding was confusing
+R00468,Operations,Neutral,2.2,True,13,Too slow on large files
+R00469,Engineering,Very dissatisfied,4.5,False,25,Love the export options
+R00470,Sales,Satisfied,5.3,True,27,
+R00471,Support,Dissatisfied,1.2,True,24,Love the export options
+R00472,Support,Satisfied,0.8,True,25,Needs better reporting
+R00473,Sales,Neutral,2.0,False,37,
+R00474,Sales,Very satisfied,4.2,False,39,Needs better reporting
+R00475,Operations,Neutral,1.2,True,39,Love the export options
+R00476,Sales,Dissatisfied,2.0,False,27,Love the export options
+R00477,Operations,Satisfied,1.1,True,32,
+R00478,Engineering,Very satisfied,8.7,True,29,Too slow on large files
+R00479,Engineering,Very satisfied,4.5,True,14,Love the export options
+R00480,Sales,Neutral,2.3,True,20,Love the export options
+R00481,Finance,Neutral,0.9,False,7,Too slow on large files
+R00482,Operations,Very satisfied,2.6,True,15,Too slow on large files
+R00483,Sales,Neutral,5.1,True,9,Love the export options
+R00484,Operations,Dissatisfied,2.2,False,8,Love the export options
+R00485,Sales,Neutral,1.7,False,28,Needs better reporting
+R00486,Engineering,Neutral,4.3,False,4,Onboarding was confusing
+R00487,Engineering,Satisfied,6.4,False,24,Works well for our team
+R00488,Sales,Neutral,2.1,True,33,Works well for our team
+R00489,Finance,Satisfied,3.7,False,16,Love the export options
+R00490,Finance,Dissatisfied,1.3,True,19,
+R00491,Finance,Satisfied,1.5,True,34,Too slow on large files
+R00492,Sales,Satisfied,3.2,False,31,Works well for our team
+R00493,Sales,Very satisfied,1.7,False,35,Onboarding was confusing
+R00494,Engineering,Satisfied,3.5,False,33,
+R00495,Finance,Satisfied,4.5,True,36,Love the export options
+R00496,Support,Dissatisfied,4.2,True,8,Onboarding was confusing
+R00497,Finance,Satisfied,1.5,False,22,Too slow on large files
+R00498,Sales,Very dissatisfied,2.2,True,9,Needs better reporting
+R00499,Design,Very satisfied,1.2,True,23,Love the export options
+R00500,Support,Dissatisfied,1.8,False,1,
+R00501,Support,Dissatisfied,1.4,True,30,
+R00502,Finance,Neutral,2.9,True,28,
+R00503,Engineering,Very satisfied,1.8,True,13,
+R00504,Support,Dissatisfied,2.6,True,2,Works well for our team
+R00505,Design,Neutral,0.9,True,36,
+R00506,Operations,Neutral,2.3,True,28,
+R00507,Finance,Satisfied,6.3,True,27,Too slow on large files
+R00508,Operations,Very satisfied,0.5,True,37,Too slow on large files
+R00509,Operations,Neutral,3.0,True,22,Works well for our team
+R00510,Operations,Neutral,2.1,False,24,Needs better reporting
+R00511,Engineering,Satisfied,6.0,True,23,
+R00512,Engineering,Very satisfied,1.5,True,17,Needs better reporting
+R00513,Design,Very satisfied,,True,35,Works well for our team
+R00514,Engineering,Satisfied,3.5,True,2,Too slow on large files
+R00515,Design,Satisfied,3.8,False,21,Onboarding was confusing
+R00516,Engineering,Satisfied,6.5,False,1,Needs better reporting
+R00517,Engineering,Dissatisfied,4.9,False,33,Works well for our team
+R00518,Support,Neutral,2.4,True,18,
+R00519,Support,Neutral,4.2,True,5,Needs better reporting
+R00520,Engineering,Neutral,2.1,True,11,Too slow on large files
+R00521,Engineering,Satisfied,3.4,False,38,Needs better reporting
+R00522,Engineering,Very satisfied,7.6,True,28,
+R00523,Sales,Satisfied,1.3,True,24,Needs better reporting
+R00524,Engineering,Very satisfied,1.2,True,10,Love the export options
+R00525,Engineering,Very satisfied,7.0,True,12,Too slow on large files
+R00526,Support,Satisfied,2.9,True,26,
+R00527,Finance,Satisfied,2.8,True,10,Love the export options
+R00528,Support,Very dissatisfied,2.0,False,32,Needs better reporting
+R00529,Sales,Satisfied,3.7,True,5,
+R00530,Finance,Satisfied,10.8,True,35,
+R00531,Sales,Neutral,4.5,False,5,Works well for our team
+R00532,Support,Neutral,7.6,True,39,Works well for our team
+R00533,Operations,Neutral,1.4,True,24,Needs better reporting
+R00534,Sales,Dissatisfied,5.2,False,3,
+R00535,Engineering,Satisfied,1.5,False,35,
+R00536,Engineering,Very satisfied,4.1,True,14,Onboarding was confusing
+R00537,Sales,Satisfied,3.1,True,39,
+R00538,Sales,Very satisfied,3.6,True,15,
+R00539,Sales,Very satisfied,3.8,True,28,Onboarding was confusing
+R00540,Engineering,Neutral,1.4,True,3,Love the export options
+R00541,Sales,Satisfied,6.2,True,6,Works well for our team
+R00542,Design,Very satisfied,0.1,True,9,Needs better reporting
+R00543,Engineering,Neutral,3.9,False,30,Works well for our team
+R00544,Sales,Very dissatisfied,2.5,True,34,
+R00545,Design,Neutral,2.3,True,17,
+R00546,Sales,Very satisfied,0.7,True,3,Onboarding was confusing
+R00547,Support,Neutral,1.8,True,31,Onboarding was confusing
+R00548,Support,Dissatisfied,5.4,True,35,Needs better reporting
+R00549,Operations,Satisfied,4.0,False,17,Works well for our team
+R00550,Sales,Satisfied,2.0,True,26,Onboarding was confusing
+R00551,Sales,Very satisfied,4.7,True,32,Needs better reporting
+R00552,Sales,Dissatisfied,0.8,True,17,Too slow on large files
+R00553,Engineering,Satisfied,6.2,True,2,
+R00554,Support,Very dissatisfied,3.0,False,7,
+R00555,Operations,Satisfied,10.7,True,32,Love the export options
+R00556,Finance,Satisfied,0.5,True,16,Love the export options
+R00557,Operations,Dissatisfied,1.3,True,17,Love the export options
+R00558,Engineering,Neutral,1.7,False,28,
+R00559,Sales,Satisfied,6.2,False,35,Love the export options
+R00560,Engineering,Very satisfied,5.2,True,36,Onboarding was confusing
+R00561,Finance,Satisfied,5.2,False,9,Onboarding was confusing
+R00562,Sales,Dissatisfied,2.3,False,33,Love the export options
+R00563,Design,Satisfied,1.4,True,10,Love the export options
+R00564,Design,Satisfied,11.8,True,14,Love the export options
+R00565,Design,Very satisfied,0.7,False,20,Too slow on large files
+R00566,Operations,Dissatisfied,5.5,True,5,Love the export options
+R00567,Sales,Dissatisfied,4.0,True,1,
+R00568,Sales,Neutral,,True,16,Love the export options
+R00569,Design,Satisfied,,True,6,Onboarding was confusing
+R00570,Engineering,Satisfied,2.8,True,37,
+R00571,Sales,Neutral,6.0,True,25,Too slow on large files
+R00572,Engineering,Dissatisfied,4.5,False,29,Works well for our team
+R00573,Design,Very satisfied,9.2,False,16,
+R00574,Support,Neutral,3.4,True,25,
+R00575,Engineering,Very satisfied,1.4,True,24,
+R00576,Finance,Very satisfied,2.8,False,6,
+R00577,Engineering,Satisfied,2.8,True,27,Love the export options
+R00578,Engineering,Very satisfied,3.2,True,27,Onboarding was confusing
+R00579,Sales,Very dissatisfied,3.4,False,8,Works well for our team
+R00580,Operations,Satisfied,6.7,True,19,Too slow on large files
+R00581,Finance,Neutral,6.8,True,13,Love the export options
+R00582,Sales,Very dissatisfied,4.3,True,5,Works well for our team
+R00583,Finance,Satisfied,3.3,True,9,Works well for our team
+R00584,Sales,Dissatisfied,1.7,True,14,
+R00585,Operations,Neutral,1.4,True,35,
+R00586,Support,Dissatisfied,4.6,False,39,Onboarding was confusing
+R00587,Support,Dissatisfied,4.8,True,26,
+R00588,Finance,Very satisfied,4.5,True,5,Onboarding was confusing
+R00589,Sales,Satisfied,1.5,True,13,Needs better reporting
+R00590,Operations,Dissatisfied,,True,2,
+R00591,Operations,Dissatisfied,7.7,False,13,Too slow on large files
+R00592,Sales,Satisfied,0.5,False,27,Works well for our team
+R00593,Engineering,Satisfied,8.1,True,12,Needs better reporting
+R00594,Support,Satisfied,2.7,True,15,
+R00595,Design,Very satisfied,1.0,True,17,Works well for our team
+R00596,Sales,Neutral,4.7,True,6,Love the export options
+R00597,Design,Very satisfied,1.3,True,31,
+R00598,Support,Dissatisfied,0.8,True,17,Works well for our team
+R00599,Engineering,Very satisfied,2.7,True,13,Needs better reporting
+R00600,Sales,Neutral,4.2,True,27,Love the export options
+R00601,Sales,Satisfied,6.2,True,33,
+R00602,Engineering,Satisfied,1.8,False,4,
+R00603,Finance,Neutral,4.0,False,8,Too slow on large files
+R00604,Engineering,Satisfied,6.3,True,39,
+R00605,Sales,Very satisfied,1.3,True,20,Works well for our team
+R00606,Engineering,Very satisfied,8.2,False,26,Needs better reporting
+R00607,Support,Satisfied,4.3,True,33,
+R00608,Operations,Neutral,4.4,True,37,Works well for our team
+R00609,Operations,Very satisfied,3.3,True,13,
+R00610,Engineering,Very satisfied,2.6,True,36,Too slow on large files
+R00611,Support,Dissatisfied,2.9,True,38,Too slow on large files
+R00612,Operations,Very satisfied,3.7,False,21,Works well for our team
+R00613,Operations,Dissatisfied,2.3,True,37,
+R00614,Operations,Dissatisfied,0.9,True,1,Needs better reporting
+R00615,Engineering,Very satisfied,2.4,False,9,Works well for our team
+R00616,Engineering,Satisfied,5.8,True,14,Love the export options
+R00617,Sales,Satisfied,,True,24,
+R00618,Finance,Neutral,6.4,False,39,Needs better reporting
+R00619,Engineering,Very satisfied,2.5,True,19,Love the export options
+R00620,Design,Dissatisfied,4.1,False,13,
+R00621,Support,Neutral,9.8,False,13,Works well for our team
+R00622,Operations,Neutral,5.4,True,17,
+R00623,Operations,Very satisfied,3.2,False,29,Love the export options
+R00624,Engineering,Very dissatisfied,5.8,True,8,
+R00625,Finance,Satisfied,6.8,True,27,Works well for our team
+R00626,Sales,Satisfied,4.8,True,27,Works well for our team
+R00627,Sales,Very satisfied,6.5,True,3,
+R00628,Support,Dissatisfied,3.7,False,18,Needs better reporting
+R00629,Finance,Satisfied,0.5,True,28,
+R00630,Support,Very dissatisfied,5.6,False,10,Needs better reporting
+R00631,Support,Neutral,4.7,False,31,Love the export options
+R00632,Finance,Satisfied,2.3,True,24,Works well for our team
+R00633,Operations,Satisfied,1.6,True,29,Needs better reporting
+R00634,Sales,Satisfied,1.8,True,36,Love the export options
+R00635,Support,Satisfied,2.9,True,29,Love the export options
+R00636,Support,Satisfied,0.4,True,38,Love the export options
+R00637,Engineering,Satisfied,5.0,False,24,Works well for our team
+R00638,Support,Very satisfied,,True,9,Love the export options
+R00639,Engineering,Neutral,0.8,False,30,Too slow on large files
+R00640,Engineering,Neutral,2.6,True,26,Needs better reporting
+R00641,Sales,Very satisfied,,True,13,Love the export options
+R00642,Support,Neutral,0.9,True,37,Too slow on large files
+R00643,Operations,Satisfied,3.0,False,5,Needs better reporting
+R00644,Engineering,Satisfied,6.5,True,14,Too slow on large files
+R00645,Design,Neutral,4.7,True,1,Works well for our team
+R00646,Sales,Neutral,0.6,True,19,Needs better reporting
+R00647,Operations,Neutral,5.5,True,19,Onboarding was confusing
+R00648,Engineering,Satisfied,5.1,True,14,Needs better reporting
+R00649,Sales,Very dissatisfied,0.5,True,5,Works well for our team
+R00650,Engineering,Satisfied,5.6,False,36,
+R00651,Support,Very satisfied,3.3,True,5,Works well for our team
+R00652,Operations,Neutral,4.9,False,38,Onboarding was confusing
+R00653,Engineering,Neutral,1.7,False,33,Love the export options
+R00654,Sales,Satisfied,0.7,True,5,Love the export options
+R00655,Engineering,Dissatisfied,1.8,True,26,
+R00656,Operations,Very satisfied,9.6,False,32,
+R00657,Support,Neutral,3.3,False,25,Works well for our team
+R00658,Sales,Satisfied,5.7,True,6,
+R00659,Engineering,Very satisfied,3.7,True,24,Works well for our team
+R00660,Support,Very dissatisfied,1.0,True,1,Works well for our team
+R00661,Sales,Very satisfied,7.7,True,21,Too slow on large files
+R00662,Operations,Neutral,2.4,False,9,Needs better reporting
+R00663,Sales,Satisfied,0.5,True,15,
+R00664,Sales,Satisfied,4.8,True,17,
+R00665,Finance,Neutral,2.8,False,17,Works well for our team
+R00666,Finance,Very satisfied,2.4,False,19,Love the export options
+R00667,Design,Very satisfied,2.0,True,17,Works well for our team
+R00668,Design,Satisfied,1.9,False,11,Too slow on large files
+R00669,Operations,Neutral,3.6,True,32,Works well for our team
+R00670,Engineering,Very satisfied,1.5,True,16,
+R00671,Finance,Neutral,6.5,True,35,
+R00672,Support,Dissatisfied,1.8,False,14,
+R00673,Design,Very satisfied,2.5,True,10,Works well for our team
+R00674,Sales,Very satisfied,2.2,True,11,Too slow on large files
+R00675,Sales,Dissatisfied,,True,22,Too slow on large files
+R00676,Finance,Satisfied,6.1,True,17,Works well for our team
+R00677,Support,Satisfied,2.3,False,31,Works well for our team
+R00678,Finance,Dissatisfied,4.6,False,33,Onboarding was confusing
+R00679,Support,Very satisfied,3.7,False,31,Too slow on large files
+R00680,Design,Neutral,2.3,True,9,
+R00681,Sales,Neutral,3.3,True,29,Works well for our team
+R00682,Engineering,Neutral,6.5,True,7,Needs better reporting
+R00683,Engineering,Very satisfied,2.8,True,39,
+R00684,Support,Satisfied,,True,8,Needs better reporting
+R00685,Sales,Neutral,5.5,True,39,Too slow on large files
+R00686,Support,Dissatisfied,1.7,False,27,
+R00687,Support,Very satisfied,1.6,False,27,Works well for our team
+R00688,Operations,Neutral,1.1,True,31,Works well for our team
+R00689,Sales,Neutral,1.1,True,7,Works well for our team
+R00690,Engineering,Neutral,7.7,False,18,
+R00691,Sales,Very satisfied,2.8,True,27,
+R00692,Finance,Very dissatisfied,0.4,False,12,Works well for our team
+R00693,Support,Neutral,1.4,False,24,
+R00694,Engineering,Satisfied,1.7,True,25,
+R00695,Finance,Satisfied,7.2,True,12,Works well for our team
+R00696,Engineering,Very satisfied,2.9,True,23,
+R00697,Finance,Satisfied,1.6,True,15,Too slow on large files
+R00698,Sales,Dissatisfied,5.4,True,9,Works well for our team
+R00699,Sales,Neutral,1.7,True,28,Works well for our team
+R00700,Support,Neutral,5.0,True,22,Onboarding was confusing
+R00701,Operations,Satisfied,2.1,True,37,Onboarding was confusing
+R00702,Sales,Dissatisfied,4.4,True,16,Love the export options
+R00703,Engineering,Neutral,3.0,False,39,Works well for our team
+R00704,Finance,Satisfied,2.9,False,26,
+R00705,Support,Neutral,0.4,False,1,Love the export options
+R00706,Sales,Dissatisfied,2.6,True,34,Love the export options
+R00707,Engineering,Satisfied,2.4,True,2,Love the export options
+R00708,Sales,Satisfied,5.1,False,35,Love the export options
+R00709,Sales,Very satisfied,3.7,True,33,Love the export options
+R00710,Engineering,Dissatisfied,2.1,True,8,Needs better reporting
+R00711,Engineering,Very satisfied,0.3,False,35,Too slow on large files
+R00712,Support,Very satisfied,2.7,True,31,
+R00713,Finance,Very satisfied,1.4,True,5,Works well for our team
+R00714,Sales,Satisfied,4.8,True,32,
+R00715,Finance,Dissatisfied,2.0,True,16,Love the export options
+R00716,Support,Dissatisfied,3.2,True,22,
+R00717,Design,Neutral,0.8,False,37,Needs better reporting
+R00718,Engineering,Satisfied,1.2,False,20,Onboarding was confusing
+R00719,Sales,Dissatisfied,3.6,True,15,
+R00720,Engineering,Dissatisfied,6.6,True,30,Needs better reporting
+R00721,Support,Satisfied,2.2,True,5,Needs better reporting
+R00722,Finance,Neutral,4.0,True,37,Too slow on large files
+R00723,Engineering,Satisfied,,True,19,Onboarding was confusing
+R00724,Engineering,Very satisfied,6.7,False,26,Needs better reporting
+R00725,Sales,Neutral,4.7,True,29,
+R00726,Support,Dissatisfied,2.7,True,22,
+R00727,Sales,Very dissatisfied,4.1,False,37,Works well for our team
+R00728,Sales,Dissatisfied,7.9,True,13,Love the export options
+R00729,Sales,Satisfied,3.3,True,10,Needs better reporting
+R00730,Engineering,Very satisfied,1.8,False,16,
+R00731,Design,Very satisfied,3.4,True,27,
+R00732,Support,Neutral,0.9,True,1,
+R00733,Finance,Dissatisfied,0.3,True,1,
+R00734,Operations,Satisfied,1.1,True,7,
+R00735,Engineering,Satisfied,,True,28,
+R00736,Design,Satisfied,4.5,False,2,Works well for our team
+R00737,Design,Satisfied,,True,9,
+R00738,Engineering,Satisfied,2.6,True,34,Too slow on large files
+R00739,Engineering,Satisfied,4.0,True,2,Onboarding was confusing
+R00740,Support,Satisfied,3.8,True,32,Needs better reporting
+R00741,Engineering,Neutral,0.3,False,30,Needs better reporting
+R00742,Operations,Satisfied,4.2,False,1,Love the export options
+R00743,Engineering,Neutral,,False,37,
+R00744,Sales,Dissatisfied,2.4,True,25,Onboarding was confusing
+R00745,Support,Very dissatisfied,5.3,True,2,Works well for our team
+R00746,Support,Neutral,4.6,False,34,
+R00747,Sales,Dissatisfied,1.0,True,28,Onboarding was confusing
+R00748,Engineering,Satisfied,1.3,True,22,Too slow on large files
+R00749,Engineering,Neutral,1.7,True,2,
+R00750,Engineering,Satisfied,1.4,True,30,Needs better reporting
+R00751,Support,Dissatisfied,3.2,True,31,Love the export options
+R00752,Sales,Dissatisfied,5.5,True,1,Too slow on large files
+R00753,Operations,Dissatisfied,11.5,True,4,Love the export options
+R00754,Design,Very dissatisfied,0.4,True,12,Works well for our team
+R00755,Sales,Dissatisfied,3.7,False,22,Love the export options
+R00756,Design,Satisfied,0.5,True,20,Love the export options
+R00757,Support,Neutral,2.9,True,26,Needs better reporting
+R00758,Engineering,Neutral,0.9,True,1,Works well for our team
+R00759,Finance,Neutral,1.2,True,3,Too slow on large files
+R00760,Sales,Neutral,1.5,True,25,Onboarding was confusing
+R00761,Design,Very satisfied,1.1,True,19,Too slow on large files
+R00762,Support,Neutral,1.6,True,6,Too slow on large files
+R00763,Operations,Neutral,4.2,True,25,Works well for our team
+R00764,Support,Neutral,1.1,True,35,
+R00765,Finance,Satisfied,2.4,True,8,
+R00766,Sales,Satisfied,2.7,True,10,Needs better reporting
+R00767,Sales,Very satisfied,1.3,True,29,
+R00768,Sales,Neutral,3.1,True,14,Love the export options
+R00769,Sales,Satisfied,,True,23,Too slow on large files
+R00770,Engineering,Satisfied,0.7,False,28,Needs better reporting
+R00771,Operations,Satisfied,1.2,True,20,Works well for our team
+R00772,Sales,Very dissatisfied,3.1,True,22,Love the export options
+R00773,Sales,Satisfied,4.0,True,38,Too slow on large files
+R00774,Finance,Very satisfied,2.0,False,26,
+R00775,Operations,Neutral,1.2,True,26,
+R00776,Operations,Neutral,5.1,True,17,Works well for our team
+R00777,Engineering,Very satisfied,,True,14,Needs better reporting
+R00778,Sales,Very satisfied,3.2,True,39,
+R00779,Finance,Neutral,4.0,True,13,Works well for our team
+R00780,Design,Neutral,3.7,True,30,Works well for our team
+R00781,Sales,Very dissatisfied,1.5,True,15,Works well for our team
+R00782,Operations,Very dissatisfied,7.9,True,12,
+R00783,Finance,Neutral,1.2,False,1,Needs better reporting
+R00784,Sales,Dissatisfied,3.8,False,32,Onboarding was confusing
+R00785,Engineering,Very satisfied,1.6,True,36,Love the export options
+R00786,Support,Dissatisfied,2.6,True,31,Too slow on large files
+R00787,Operations,Neutral,1.2,True,35,Works well for our team
+R00788,Operations,Satisfied,2.5,True,4,
+R00789,Engineering,Very satisfied,0.9,False,4,
+R00790,Operations,Neutral,5.0,True,34,Too slow on large files
+R00791,Sales,Very dissatisfied,6.2,True,29,Works well for our team
+R00792,Finance,Very satisfied,1.8,True,11,Needs better reporting
+R00793,Sales,Neutral,0.4,True,26,Works well for our team
+R00794,Design,Very satisfied,2.4,True,4,Onboarding was confusing
+R00795,Engineering,Satisfied,2.6,False,34,Love the export options
+R00796,Support,Very satisfied,2.5,True,20,
+R00797,Support,Dissatisfied,1.3,True,22,Too slow on large files
+R00798,Engineering,Satisfied,3.3,False,11,Needs better reporting
+R00799,Sales,Neutral,2.8,True,23,
+R00800,Design,Satisfied,1.9,False,15,Needs better reporting
+R00801,Operations,Satisfied,8.0,True,3,Needs better reporting
+R00802,Support,Dissatisfied,8.0,True,39,Too slow on large files
+R00803,Design,Satisfied,2.4,True,16,Love the export options
+R00804,Operations,Dissatisfied,4.1,True,19,Too slow on large files
+R00805,Operations,Satisfied,1.7,True,32,Needs better reporting
+R00806,Sales,Satisfied,1.6,True,9,Love the export options
+R00807,Finance,Very satisfied,1.8,True,21,Onboarding was confusing
+R00808,Operations,Satisfied,5.2,True,20,Too slow on large files
+R00809,Support,Neutral,11.4,True,20,Needs better reporting
+R00810,Engineering,Very satisfied,4.4,False,3,Love the export options
+R00811,Support,Neutral,3.5,True,22,Needs better reporting
+R00812,Engineering,Dissatisfied,9.7,True,39,Too slow on large files
+R00813,Finance,Dissatisfied,1.7,False,33,Too slow on large files
+R00814,Engineering,Very satisfied,1.0,True,4,Works well for our team
+R00815,Design,Neutral,,False,7,Onboarding was confusing
+R00816,Design,Dissatisfied,5.1,True,25,Too slow on large files
+R00817,Engineering,Neutral,2.7,True,24,Needs better reporting
+R00818,Sales,Neutral,4.3,True,3,Too slow on large files
+R00819,Sales,Very dissatisfied,3.7,True,12,Too slow on large files
+R00820,Sales,Satisfied,1.7,True,18,Needs better reporting
+R00821,Sales,Neutral,0.3,True,22,Love the export options
+R00822,Engineering,Dissatisfied,10.2,True,7,Onboarding was confusing
+R00823,Sales,Satisfied,0.7,True,14,Onboarding was confusing
+R00824,Engineering,Satisfied,6.4,False,34,Too slow on large files
+R00825,Sales,Satisfied,2.1,True,30,Needs better reporting
+R00826,Support,Satisfied,3.5,True,26,
+R00827,Finance,Satisfied,0.6,True,34,
+R00828,Engineering,Satisfied,1.3,True,21,Love the export options
+R00829,Support,Neutral,3.1,True,20,Love the export options
+R00830,Sales,Dissatisfied,2.9,True,11,Love the export options
+R00831,Sales,Satisfied,2.5,True,14,
+R00832,Operations,Satisfied,10.4,True,5,Too slow on large files
+R00833,Sales,Very satisfied,3.3,False,30,Onboarding was confusing
+R00834,Design,Satisfied,3.4,True,1,Needs better reporting
+R00835,Operations,Neutral,4.4,False,25,Needs better reporting
+R00836,Engineering,Satisfied,3.3,False,12,Needs better reporting
+R00837,Engineering,Satisfied,3.4,False,14,Works well for our team
+R00838,Support,Neutral,3.8,True,32,Works well for our team
+R00839,Support,Neutral,1.9,False,11,
+R00840,Sales,Neutral,4.3,False,16,
+R00841,Engineering,Very satisfied,8.0,False,33,
+R00842,Engineering,Very satisfied,4.8,True,34,
+R00843,Sales,Very dissatisfied,,True,4,Too slow on large files
+R00844,Operations,Satisfied,4.9,True,37,
+R00845,Engineering,Very satisfied,2.4,True,37,
+R00846,Sales,Very satisfied,1.5,True,11,Love the export options
+R00847,Sales,Dissatisfied,3.7,True,18,Love the export options
+R00848,Operations,Satisfied,3.9,True,7,Needs better reporting
+R00849,Finance,Satisfied,10.3,True,28,Onboarding was confusing
+R00850,Operations,Neutral,2.4,True,6,Too slow on large files
+R00851,Sales,Neutral,2.3,True,23,Works well for our team
+R00852,Design,Neutral,0.9,True,23,Needs better reporting
+R00853,Finance,Satisfied,3.0,False,11,Works well for our team
+R00854,Design,Very satisfied,1.3,True,33,
+R00855,Design,Satisfied,3.5,True,5,Too slow on large files
+R00856,Finance,Satisfied,3.5,False,25,Works well for our team
+R00857,Operations,Neutral,5.7,False,21,Onboarding was confusing
+R00858,Support,Neutral,5.6,False,29,
+R00859,Finance,Satisfied,4.2,True,3,Works well for our team
+R00860,Support,Satisfied,,False,15,Works well for our team
+R00861,Sales,Dissatisfied,3.9,True,3,Love the export options
+R00862,Engineering,Very satisfied,0.4,True,8,Needs better reporting
+R00863,Sales,Satisfied,2.9,True,29,Too slow on large files
+R00864,Engineering,Very dissatisfied,1.7,False,33,Love the export options
+R00865,Design,Very dissatisfied,4.4,False,38,Too slow on large files
+R00866,Support,Dissatisfied,,True,2,Love the export options
+R00867,Engineering,Satisfied,1.8,False,5,
+R00868,Engineering,Neutral,4.5,False,19,Love the export options
+R00869,Operations,Neutral,5.3,True,26,Onboarding was confusing
+R00870,Operations,Satisfied,2.2,True,16,
+R00871,Design,Very satisfied,2.8,True,26,
+R00872,Operations,Satisfied,1.1,True,15,Works well for our team
+R00873,Design,Neutral,1.3,True,10,
+R00874,Support,Neutral,1.5,True,6,Needs better reporting
+R00875,Support,Very dissatisfied,5.2,True,18,Love the export options
+R00876,Support,Satisfied,1.3,True,35,Works well for our team
+R00877,Sales,Neutral,1.0,False,22,Works well for our team
+R00878,Engineering,Very satisfied,0.4,True,23,
+R00879,Design,Satisfied,3.3,False,30,
+R00880,Sales,Very dissatisfied,2.4,True,31,Works well for our team
+R00881,Support,Satisfied,3.1,False,38,Works well for our team
+R00882,Engineering,Dissatisfied,2.1,True,37,
+R00883,Engineering,Satisfied,8.5,True,38,Works well for our team
+R00884,Operations,Dissatisfied,4.7,False,4,Too slow on large files
+R00885,Operations,Dissatisfied,0.4,True,17,
+R00886,Engineering,Very satisfied,2.9,True,17,Onboarding was confusing
+R00887,Support,Dissatisfied,4.5,True,7,
+R00888,Support,Neutral,2.8,False,20,Love the export options
+R00889,Engineering,Very satisfied,2.3,True,3,Needs better reporting
+R00890,Design,Satisfied,4.9,True,19,
+R00891,Support,Very satisfied,2.1,True,31,Too slow on large files
+R00892,Design,Very satisfied,,True,20,Onboarding was confusing
+R00893,Support,Satisfied,5.1,True,8,
+R00894,Sales,Satisfied,5.3,True,7,Needs better reporting
+R00895,Finance,Satisfied,7.2,True,39,
+R00896,Engineering,Neutral,2.2,True,24,Needs better reporting
+R00897,Sales,Dissatisfied,5.4,True,21,
+R00898,Support,Very satisfied,1.9,True,7,Love the export options
+R00899,Operations,Satisfied,3.5,True,23,
+R00900,Sales,Satisfied,5.5,False,38,Works well for our team

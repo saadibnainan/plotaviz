@@ -1,0 +1,57 @@
+name: Feature request
+description: Suggest a capability for PlotaViz
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: a few things are **explicitly out of scope** for v1 — plugin architecture,
+        localization, real-time streaming, and live database connectors. Items already on the
+        roadmap (auto EDA report, multi-chart dashboard, chart customization panel, undo/redo,
+        colorblind-safe palettes and dark mode, dataset joins) are planned; a 👍 on an existing
+        issue helps more than a new one.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation you hit, not the implementation you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area?
+      options:
+        - New chart type
+        - Selector rule / scoring change
+        - Preprocessing step
+        - LLM provider or prompt
+        - Export format
+        - UI / workflow
+        - CLI
+        - Packaging / distribution
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Including whether an existing selector rule or a pandas-query filter gets you there already.
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I'd be willing to open a PR for this

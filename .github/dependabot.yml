@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    groups:
+      dev-tooling:
+        patterns: ["ruff", "mypy", "pytest*", "pre-commit", "*-stubs", "types-*"]
+      data-stack:
+        patterns: ["pandas", "polars", "pyarrow", "numpy"]
+      llm-sdks:
+        patterns: ["anthropic", "openai", "google-genai", "httpx"]
+    ignore:
+      # PySide6 major/minor bumps change Qt itself — packaging and WebEngine need manual testing.
+      - dependency-name: "PySide6"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "ci"]
