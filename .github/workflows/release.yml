@@ -24,7 +24,7 @@ jobs:
         run: |
           cd dist
           ditto -c -k --sequesterRsrc --keepParent PlotaViz.app plotaviz-macos.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: plotaviz-macos
           path: dist/plotaviz-macos.zip
@@ -45,7 +45,7 @@ jobs:
       - run: pip install -e ".[build]"
       - name: Build AppImage
         run: bash scripts/build_appimage.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: plotaviz-appimage
           path: dist/PlotaViz-*.AppImage
