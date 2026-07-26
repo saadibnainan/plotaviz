@@ -246,6 +246,3 @@ output/
 .idea/
 .vscode/
 
-# Local build notes — not part of the published repo
-plotaviz-claude-code-prompt.md
-repo-setup-checklist.md
