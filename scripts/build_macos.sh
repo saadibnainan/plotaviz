@@ -10,7 +10,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP_NAME="PlotaViz"
-ENTRY="plotaviz/main.py"
+# PyInstaller runs its target as a standalone top-level script, which breaks plotaviz/main.py's
+# relative import (`from . import __version__`). This shim imports the package properly first.
+ENTRY="scripts/pyinstaller_entry.py"
+# `pip install -e .` (PEP 660) installs plotaviz behind a custom import-hook finder rather than a
+# plain directory in site-packages. PyInstaller's static analysis can't walk that finder, so it
+# silently drops the whole package instead of erroring — `--paths .` points it at the real source
+# directory instead, which it can walk normally like any non-editable install.
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "error: this script builds a macOS .app and must run on macOS." >&2
@@ -56,9 +62,11 @@ echo "==> Building ${APP_NAME}.app"
   --clean \
   --windowed \
   --name "$APP_NAME" \
+  --paths . \
   --osx-bundle-identifier "com.plotaviz.app" \
   --add-data "plotaviz/core/rules.yaml:plotaviz/core" \
   --collect-data plotly \
+  --hidden-import plotaviz.main \
   --hidden-import plotaviz.ui.main_window \
   "${EXCLUDES[@]}" \
   "$ENTRY"
