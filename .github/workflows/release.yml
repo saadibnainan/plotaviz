@@ -67,3 +67,19 @@ jobs:
           body: |
             PlotaViz release. Qt (PySide6) is LGPLv3 and is dynamically linked in these bundles;
             see THIRD_PARTY_LICENSES for attribution and relinking information.
+
+  publish-pypi:
+    needs: [build-macos, build-appimage]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install build
+      - run: python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1

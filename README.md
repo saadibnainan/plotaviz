@@ -1,6 +1,7 @@
 # PlotaViz
 
 [![CI](https://github.com/saadibnainan/plotaviz/actions/workflows/ci.yml/badge.svg)](https://github.com/saadibnainan/plotaviz/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/plotaviz)](https://pypi.org/project/plotaviz/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Qt: LGPLv3](https://img.shields.io/badge/Qt-LGPLv3-orange)](THIRD_PARTY_LICENSES.md)
@@ -47,7 +48,14 @@ between them in one click. The parts that usually go wrong are treated as first-
 
 Python 3.11 or newer.
 
-### From source (all platforms)
+### From PyPI (all platforms)
+
+```bash
+pip install plotaviz
+plotaviz
+```
+
+### From source (contributing / latest main)
 
 ```bash
 git clone https://github.com/saadibnainan/plotaviz.git
@@ -64,7 +72,7 @@ Apple Silicon and Intel are both supported.
 
 ```bash
 brew install python@3.11          # if you need it
-pip install -e .
+pip install plotaviz
 ```
 
 A prebuilt `.app` is attached to each [release](https://github.com/saadibnainan/plotaviz/releases).
@@ -92,7 +100,7 @@ sudo dnf install python3-devel libglvnd-egl xcb-util-cursor libxkbcommon-x11
 sudo pacman -S python libxkbcommon-x11 xcb-util-cursor
 ```
 
-Then either `pip install -e .`, or grab the **AppImage** from the releases page:
+Then either `pip install plotaviz`, or grab the **AppImage** from the releases page:
 
 ```bash
 chmod +x PlotaViz-*.AppImage
@@ -105,9 +113,9 @@ To build one: `make build-appimage`. Recipes for `.deb`, `.rpm`, and an **AUR PK
 ### Optional extras
 
 ```bash
-pip install -e ".[llm]"     # Anthropic / OpenAI / Gemini / Ollama providers
-pip install -e ".[fast]"    # pyqtgraph fast path for very large numeric plots
-pip install -e ".[dev]"     # tests, ruff, mypy, pre-commit
+pip install "plotaviz[llm]"     # Anthropic / OpenAI / Gemini / Ollama providers
+pip install "plotaviz[fast]"    # pyqtgraph fast path for very large numeric plots
+pip install -e ".[dev]"         # tests, ruff, mypy, pre-commit — source checkout only
 ```
 
 ---
