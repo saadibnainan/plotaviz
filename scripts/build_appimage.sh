@@ -13,7 +13,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP_NAME="PlotaViz"
-ENTRY="plotaviz/main.py"
+# PyInstaller runs its target as a standalone top-level script, which breaks plotaviz/main.py's
+# relative import (`from . import __version__`). This shim imports the package properly first.
+ENTRY="scripts/pyinstaller_entry.py"
+# `pip install -e .` (PEP 660) installs plotaviz behind a custom import-hook finder rather than a
+# plain directory in site-packages. PyInstaller's static analysis can't walk that finder, so it
+# silently drops the whole package instead of erroring — `--paths .` (below) points it at the real
+# source directory instead, which it can walk normally like any non-editable install.
 VERSION="$(python3 -c 'import re,pathlib; print(re.search(r"__version__ = \"([^\"]+)\"", pathlib.Path("plotaviz/__init__.py").read_text()).group(1))')"
 ARCH="$(uname -m)"
 
@@ -57,8 +63,10 @@ echo "==> Building the one-folder bundle"
   --noconfirm \
   --clean \
   --name "$APP_NAME" \
+  --paths . \
   --add-data "plotaviz/core/rules.yaml:plotaviz/core" \
   --collect-data plotly \
+  --hidden-import plotaviz.main \
   --hidden-import plotaviz.ui.main_window \
   "${EXCLUDES[@]}" \
   "$ENTRY"
