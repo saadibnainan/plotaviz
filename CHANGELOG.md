@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Static (matplotlib) view no longer stacks an extra navigation toolbar above the chart on
+  every re-render.
+- Interactive charts with a legend (colour splits, pies) no longer draw the title over the
+  legend; the title gets its own row at the top of the figure.
+
 ## [0.1.0] - 2026-07-26
 
 ### Added

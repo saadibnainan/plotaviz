@@ -230,6 +230,31 @@ class TestRenderers:
         figure = build_matplotlib(numeric_pair_df, spec, dpi=60)
         plt.close(figure)
 
+    def test_title_gets_its_own_row_when_a_legend_is_shown(
+        self, timeseries_df: pd.DataFrame
+    ) -> None:
+        # Regression: the horizontal legend sits just above the plot, where Plotly also puts
+        # the title, so "revenue by order_date, split by region" was drawn over "north south".
+        spec = ChartSpec("line", x="order_date", y="revenue", color="region")
+        figure = build_plotly(timeseries_df, spec)
+
+        assert figure.layout.title.yref == "container"
+        assert figure.layout.title.yanchor == "top"
+        assert figure.layout.margin.t >= 100
+
+    def test_single_series_keeps_the_compact_top_margin(self, categorical_df: pd.DataFrame) -> None:
+        spec = ChartSpec("bar", x="department", y="tenure", agg="mean")
+        figure = build_plotly(categorical_df, spec)
+
+        assert figure.layout.margin.t == 60
+        assert figure.layout.title.yref is None
+
+    def test_pie_legend_counts_slices(self, categorical_df: pd.DataFrame) -> None:
+        # One pie trace still lists every slice in the legend, so it needs the title row too.
+        figure = build_plotly(categorical_df, ChartSpec("pie", x="department", agg="count"))
+
+        assert figure.layout.margin.t >= 100
+
     def test_log_option_is_applied(self, categorical_df: pd.DataFrame) -> None:
         import matplotlib.pyplot as plt
 
