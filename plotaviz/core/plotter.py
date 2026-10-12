@@ -469,11 +469,17 @@ def build_plotly(df: pd.DataFrame, spec: ChartSpec, *, prepared: PreparedData | 
     if opts.get("log_x"):
         fig.update_xaxes(type="log")
 
+    # The horizontal legend sits just above the plot area, which is also where Plotly puts
+    # the title, so with a colour split the two drew over each other. When a legend is shown,
+    # pin the title to the top of the figure and make room for both rows.
+    has_legend = _shows_legend(fig)
     fig.update_layout(
         template=opts.get("template", "plotly_white"),
-        margin={"l": 60, "r": 30, "t": 60, "b": 60},
+        margin={"l": 60, "r": 30, "t": 100 if has_legend else 60, "b": 60},
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
     )
+    if has_legend:
+        fig.update_layout(title={"yref": "container", "y": 1, "yanchor": "top", "pad": {"t": 18}})
     if data.sampled:
         fig.add_annotation(
             text=data.sampling_notice,
@@ -485,6 +491,23 @@ def build_plotly(df: pd.DataFrame, spec: ChartSpec, *, prepared: PreparedData | 
             font={"size": 11, "color": "#666"},
         )
     return fig
+
+
+def _shows_legend(fig: Any) -> bool:
+    """Whether Plotly will draw a legend with more than one entry.
+
+    Some trace types (treemap, heatmap) have no ``showlegend`` at all and never add entries.
+    A pie is one trace but lists every slice in the legend.
+    """
+    entries = 0
+    for trace in fig.data:
+        if getattr(trace, "showlegend", False) is False:
+            continue
+        if trace.type == "pie" and trace.labels is not None:
+            entries += len(trace.labels)
+        else:
+            entries += 1
+    return entries > 1
 
 
 def _has_statsmodels() -> bool:

@@ -64,6 +64,7 @@ class ChartView(QWidget):
         self._temp_files: list[Path] = []
         self._placeholder: QLabel | None = None
         self._canvas: Any = None
+        self._toolbar: Any = None
         self._web: Any = None
         self.last_notes: list[str] = []
 
@@ -161,8 +162,8 @@ class ChartView(QWidget):
         self._clear()
         self._canvas = FigureCanvasQTAgg(figure)
         self._canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        toolbar = NavigationToolbar(self._canvas, self)
-        self._layout.addWidget(toolbar)
+        self._toolbar = NavigationToolbar(self._canvas, self)
+        self._layout.addWidget(self._toolbar)
         self._layout.addWidget(self._canvas)
         self._canvas.draw_idle()
 
@@ -182,8 +183,12 @@ class ChartView(QWidget):
         self._show_placeholder(text)
 
     def _clear(self) -> None:
-        """Tear down whatever widget is currently showing."""
-        for attr in ("_placeholder", "_canvas", "_web"):
+        """Tear down whatever widget is currently showing.
+
+        The matplotlib toolbar is listed too: it is a separate widget from the canvas, and
+        leaving it behind stacked one extra toolbar above the chart on every re-render.
+        """
+        for attr in ("_placeholder", "_toolbar", "_canvas", "_web"):
             widget = getattr(self, attr, None)
             if widget is not None:
                 self._layout.removeWidget(widget)
