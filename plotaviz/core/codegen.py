@@ -23,6 +23,8 @@ from .plotter import (
     PAIR_PLOT_MAX_COLUMNS,
     effective_spec,
     group_keys,
+    palette_for,
+    primary_color,
 )
 from .preprocess import Pipeline
 from .spec import MATRIX_CHARTS, ChartSpec
@@ -181,8 +183,59 @@ def _chart_function(spec: ChartSpec, flavour: str) -> list[str]:
     lines += [f"    {line}" for line in _prepare_lines(spec, eff)]
     lines.append("")
     body = _plotly_body(eff) if flavour == "plotly" else _matplotlib_body(eff)
+    body = _customize(body, eff, flavour)
     lines += [f"    {line}" if line else "" for line in body]
     return lines
+
+
+def _customize(body: list[str], spec: ChartSpec, flavour: str) -> list[str]:
+    """Apply the spec's customization options to an emitted chart body.
+
+    Mirrors what the renderers do with ``palette``, ``x_label``/``y_label``, and ``bins``, so a
+    chart customized in the app looks the same when its script is run.
+    """
+    opts = spec.options
+    palette = palette_for(spec)
+    bins = opts.get("bins")
+    out: list[str] = []
+    if palette:
+        out.append(f"PALETTE = {palette!r}")
+
+    for line in body:
+        if flavour == "plotly":
+            px_call = line.startswith("fig = px.") and "imshow" not in line
+            if palette and px_call and "scatter_matrix" not in line:
+                line = line.replace(", title=", ", color_discrete_sequence=PALETTE, title=", 1)
+            if palette and spec.chart == "heatmap" and line.startswith("fig = px.imshow"):
+                line = line.replace(
+                    "aspect='auto',", "aspect='auto', color_continuous_scale='cividis',"
+                )
+            if palette and "mode='lines'))" in line:
+                line = line.replace("mode='lines'))", "mode='lines', line={'color': PALETTE[0]}))")
+            if bins and line.startswith("fig = px.histogram"):
+                line = line.replace(", title=", f", nbins={int(bins)}, title=", 1)
+            if line == "fig.update_layout(template='plotly_white')":
+                if opts.get("x_label"):
+                    out.append(f"fig.update_xaxes(title_text={str(opts['x_label'])!r})")
+                if opts.get("y_label"):
+                    out.append(f"fig.update_yaxes(title_text={str(opts['y_label'])!r})")
+        else:
+            line = line.replace("'#4C78A8'", repr(primary_color(spec)))
+            if bins:
+                line = line.replace("bins='auto'", f"bins={int(bins)}")
+            if palette:
+                line = line.replace("ax=ax, width=0.8)", "ax=ax, width=0.8, color=PALETTE)")
+                line = line.replace("autopct='%1.1f%%')", "autopct='%1.1f%%', colors=PALETTE)")
+                line = line.replace("cmap='viridis'", "cmap='cividis'")
+            if line == "fig.tight_layout()":
+                if opts.get("x_label"):
+                    out.append(f"ax.set_xlabel({str(opts['x_label'])!r})")
+                if opts.get("y_label"):
+                    out.append(f"ax.set_ylabel({str(opts['y_label'])!r})")
+        out.append(line)
+        if flavour != "plotly" and palette and line.startswith("fig, ax = plt.subplots("):
+            out.append("ax.set_prop_cycle(color=PALETTE)")
+    return out
 
 
 _CAP_HELPER = [
@@ -273,7 +326,8 @@ def _prepare_lines(spec: ChartSpec, eff: ChartSpec) -> list[str]:
     if spec.chart in {"line", "area"} and eff.x:
         lines.append(f"plot_df = plot_df.sort_values({eff.x!r})")
     elif spec.chart in {"bar", "treemap", "pie"} and eff.y:
-        lines.append(f"plot_df = plot_df.sort_values({eff.y!r}, ascending=False)")
+        ascending = bool(spec.options.get("sort_ascending", False))
+        lines.append(f"plot_df = plot_df.sort_values({eff.y!r}, ascending={ascending!r})")
 
     return lines
 

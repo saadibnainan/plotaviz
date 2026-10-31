@@ -10,6 +10,7 @@ is what makes type overrides and filter changes cheap.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,13 @@ import pandas as pd
 from . import codegen, exporter, loader, plotter, selector
 from .errors import PlotaVizError, PreprocessError
 from .preprocess import (
+    MISSING_CHOICES,
+    OUTLIER_ACTIONS,
+    OUTLIER_METHODS,
     CoerceTypes,
+    Deduplicate,
+    FillMissing,
+    FlagOutliers,
     NormalizeColumnNames,
     Pipeline,
     PipelineResult,
@@ -29,6 +36,15 @@ from .preprocess import (
 from .profiler import DatasetProfile, profile
 from .session import Session
 from .spec import MATRIX_CHARTS, ChartSpec
+
+#: Undo depth. Each entry is a serialized step list, so this is cheap even for large data.
+MAX_UNDO = 50
+
+#: One undo entry: the serialized pipeline and the type overrides.
+_Snapshot = tuple[list[dict[str, Any]], dict[str, str]]
+
+#: The row-level cleaning steps :meth:`Analysis.set_cleaning` manages.
+_CLEANING_STEPS = (Deduplicate, FillMissing, FlagOutliers)
 
 
 @dataclass
@@ -59,6 +75,9 @@ class Analysis:
     spec: ChartSpec | None = None
     inferred_types: dict[str, str] = field(default_factory=dict)
     auto_spec: bool = True
+    load_options: dict[str, Any] = field(default_factory=dict)
+    _undo: list[_Snapshot] = field(default_factory=list, repr=False)
+    _redo: list[_Snapshot] = field(default_factory=list, repr=False)
 
     # ------------------------------------------------------------------ construction
 
@@ -67,7 +86,7 @@ class Analysis:
         cls,
         path: str | Path,
         *,
-        missing_strategy: str = "median",
+        missing_strategy: str = "keep",
         flag_outliers: bool = True,
         **load_kwargs: Any,
     ) -> Analysis:
@@ -80,7 +99,7 @@ class Analysis:
             **load_kwargs: Passed through to :func:`plotaviz.core.loader.load`.
         """
         load_result = loader.load(path, **load_kwargs)
-        analysis = cls(load_result=load_result)
+        analysis = cls(load_result=load_result, load_options=dict(load_kwargs.get("options") or {}))
 
         # Profile the raw frame first so the pipeline knows which columns need coercing.
         analysis.inferred_types = _infer_types(load_result)
@@ -151,44 +170,212 @@ class Analysis:
         return self.set_type_overrides({**self.type_overrides, column: role})
 
     def set_type_overrides(self, overrides: dict[str, str]) -> PipelineResult:
-        """Replace every type correction at once and replay.
+        """Replace every type correction at once and replay. Undoable.
 
         The coercion step is rebuilt from the inferred roles plus ``overrides``, so dropping an
         override — "Reset to detected" — really does undo its coercion instead of leaving the
         column converted.
         """
-        self.type_overrides = dict(overrides)
-        types = {**self.inferred_types, **self.type_overrides}
-        coerce = next((s for s in self.pipeline if isinstance(s, CoerceTypes)), None)
-        if coerce is not None:
-            coerce.types = types
-        elif types:
-            self.pipeline.steps.insert(_after_rename(self.pipeline), CoerceTypes(types))
-        return self.rerun()
+
+        def change() -> None:
+            self.type_overrides = dict(overrides)
+            types = {**self.inferred_types, **self.type_overrides}
+            coerce = next((s for s in self.pipeline if isinstance(s, CoerceTypes)), None)
+            if coerce is not None:
+                coerce.types = types
+            elif types:
+                self.pipeline.steps.insert(_after_rename(self.pipeline), CoerceTypes(types))
+
+        return self._transaction(change)
 
     def set_filters(self, filters: list[Step]) -> PipelineResult:
-        """Replace the active filters and replay.
+        """Replace the active filters and replay. Undoable.
 
-        If the new filters fail — a typo in the query bar is the usual cause — the previous
-        filters are restored before the error propagates. Otherwise the broken step would stay
-        in the pipeline and every later replay, and the saved session, would inherit it.
+        If the new filters fail — a typo in the query bar is the usual cause — everything is
+        restored before the error propagates. Otherwise the broken step would stay in the pipeline
+        and every later replay, and the saved session, would inherit it.
         """
-        previous_steps = list(self.pipeline.steps)
-        previous_state = (
+        return self._transaction(lambda: self.pipeline.replace_filters(filters))
+
+    def set_cleaning(
+        self,
+        *,
+        missing: str = "keep",
+        outliers: str = "off",
+        outlier_method: str = "iqr",
+        outlier_threshold: float = 1.5,
+        dedupe: bool = True,
+    ) -> PipelineResult:
+        """Replace the row-level cleaning steps and replay. Undoable.
+
+        Renaming, type coercion, filters, and any other step stay exactly where they are; only
+        duplicate removal, missing-value handling, and outlier handling are swapped, and they are
+        put back in their canonical place right after type coercion.
+
+        Args:
+            missing: One of :data:`~plotaviz.core.preprocess.MISSING_CHOICES`.
+            outliers: One of :data:`~plotaviz.core.preprocess.OUTLIER_ACTIONS`.
+            outlier_method: ``"iqr"`` or ``"zscore"``.
+            outlier_threshold: IQR multiplier or z-score cutoff.
+            dedupe: Remove fully duplicated rows.
+
+        Raises:
+            PreprocessError: If a choice is unknown, or the new pipeline fails.
+        """
+        if missing not in MISSING_CHOICES:
+            raise PreprocessError(f"Unknown missing-value choice {missing!r}.")
+        if outliers not in OUTLIER_ACTIONS:
+            raise PreprocessError(f"Unknown outlier action {outliers!r}.")
+        if outlier_method not in OUTLIER_METHODS:
+            raise PreprocessError(f"Unknown outlier method {outlier_method!r}.")
+
+        cleaning: list[Step] = []
+        if dedupe:
+            cleaning.append(Deduplicate())
+        if missing != "keep":
+            cleaning.append(FillMissing(strategy=missing))
+        if outliers != "off":
+            cleaning.append(
+                FlagOutliers(
+                    method=outlier_method, threshold=outlier_threshold, drop=outliers == "drop"
+                )
+            )
+
+        def change() -> None:
+            kept = [s for s in self.pipeline.steps if not isinstance(s, _CLEANING_STEPS)]
+            at = 0
+            for index, step in enumerate(kept):
+                if isinstance(step, (NormalizeColumnNames, CoerceTypes)):
+                    at = index + 1
+            self.pipeline.steps = kept[:at] + cleaning + kept[at:]
+
+        return self._transaction(change)
+
+    def cleaning(self) -> dict[str, Any]:
+        """The current row-level cleaning settings, in :meth:`set_cleaning`'s vocabulary."""
+        fill = next((s for s in self.pipeline if isinstance(s, FillMissing)), None)
+        flag = next((s for s in self.pipeline if isinstance(s, FlagOutliers)), None)
+        return {
+            "missing": fill.strategy if fill else "keep",
+            "outliers": ("drop" if flag.drop else "flag") if flag else "off",
+            "outlier_method": flag.method if flag else "iqr",
+            "outlier_threshold": flag.threshold if flag else 1.5,
+            "dedupe": any(isinstance(s, Deduplicate) for s in self.pipeline),
+        }
+
+    def remove_step(self, index: int) -> PipelineResult:
+        """Delete one step from the pipeline and replay. Undoable.
+
+        Raises:
+            PreprocessError: For the column-renaming step — every other step, filter, chart, and
+                type override refers to columns by the names it produces.
+        """
+        if not 0 <= index < len(self.pipeline.steps):
+            raise PreprocessError(f"There is no step {index + 1} to remove.")
+        if isinstance(self.pipeline.steps[index], NormalizeColumnNames):
+            raise PreprocessError(
+                "The column-renaming step cannot be removed.",
+                hint="Every other step, filter, and chart refers to the names it produces.",
+            )
+
+        def change() -> None:
+            removed = self.pipeline.remove(index)
+            if isinstance(removed, CoerceTypes):
+                self.type_overrides = {}
+
+        return self._transaction(change)
+
+    # ------------------------------------------------------------------ undo / redo
+
+    @property
+    def can_undo(self) -> bool:
+        """Whether there is a change to undo."""
+        return bool(self._undo)
+
+    @property
+    def can_redo(self) -> bool:
+        """Whether there is an undone change to redo."""
+        return bool(self._redo)
+
+    def undo(self) -> PipelineResult | None:
+        """Revert the last pipeline change (filters, types, cleaning, removed step).
+
+        Returns ``None`` when there is nothing to undo.
+        """
+        if not self._undo:
+            return None
+        target = self._undo.pop()
+        self._redo.append(self._snapshot())
+        try:
+            return self._restore(target)
+        except PlotaVizError:
+            self._redo.pop()
+            self._undo.append(target)
+            raise
+
+    def redo(self) -> PipelineResult | None:
+        """Re-apply the last undone change. Returns ``None`` when there is nothing to redo."""
+        if not self._redo:
+            return None
+        target = self._redo.pop()
+        self._undo.append(self._snapshot())
+        try:
+            return self._restore(target)
+        except PlotaVizError:
+            self._undo.pop()
+            self._redo.append(target)
+            raise
+
+    def _snapshot(self) -> _Snapshot:
+        """The undoable state: the recipe and the type corrections, both serialized."""
+        return (self.pipeline.to_list(), dict(self.type_overrides))
+
+    def _restore(self, snapshot: _Snapshot) -> PipelineResult:
+        """Replay a snapshot, putting the current state back if the replay fails."""
+        steps, overrides = snapshot
+
+        def change() -> None:
+            self.pipeline = Pipeline.from_list(steps)
+            self.type_overrides = dict(overrides)
+
+        return self._replay_with_rollback(change)
+
+    def _transaction(self, change: Callable[[], Any]) -> PipelineResult:
+        """Apply an undoable change: checkpoint, change, replay — or roll everything back."""
+        checkpoint = self._snapshot()
+        result = self._replay_with_rollback(change)
+        self._undo.append(checkpoint)
+        del self._undo[:-MAX_UNDO]
+        self._redo.clear()
+        return result
+
+    def _replay_with_rollback(self, change: Callable[[], Any]) -> PipelineResult:
+        """Run ``change`` then :meth:`rerun`; on failure restore every piece of state."""
+        saved = (
+            self.pipeline,
+            dict(self.type_overrides),
             self.result,
             self.profile,
             self.recommendations,
             self.spec,
             self.auto_spec,
         )
-        self.pipeline.replace_filters(filters)
+        steps_before = [s.to_dict() for s in self.pipeline.steps]
         try:
+            change()
             return self.rerun()
         except PlotaVizError:
-            self.pipeline.steps = previous_steps
-            (self.result, self.profile, self.recommendations, self.spec, self.auto_spec) = (
-                previous_state
-            )
+            (
+                self.pipeline,
+                self.type_overrides,
+                self.result,
+                self.profile,
+                self.recommendations,
+                self.spec,
+                self.auto_spec,
+            ) = saved
+            # Steps are mutable objects; a change may have edited one in place (type coercion).
+            self.pipeline = Pipeline.from_list(steps_before)
             raise
 
     # ------------------------------------------------------------------ charting
@@ -247,6 +434,7 @@ class Analysis:
         return Session(
             source_path=str(self.load_result.path),
             source_hash=self.load_result.file_hash,
+            load_options=dict(self.load_options),
             type_overrides=dict(self.type_overrides),
             pipeline=self.pipeline,
             spec=self.spec,
@@ -265,12 +453,15 @@ class Analysis:
         warning = session.check_source()
         if session.current_hash:
             load_kwargs.setdefault("known_hash", session.current_hash)
+        if session.load_options:
+            load_kwargs.setdefault("options", dict(session.load_options))
         load_result = loader.load(session.source_path, **load_kwargs)
         analysis = cls(
             load_result=load_result,
             pipeline=session.pipeline,
             type_overrides=dict(session.type_overrides),
             inferred_types=_infer_types(load_result),
+            load_options=dict(session.load_options),
         )
         analysis.rerun()
         if session.spec is not None:

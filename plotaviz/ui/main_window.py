@@ -46,8 +46,11 @@ from ..core.plotter import MAX_POINTS
 from ..core.preprocess import QueryFilter
 from ..core.session import SESSION_SUFFIX, Session
 from ..core.spec import ChartSpec
+from .cleaning_panel import CleaningPanel
+from .customize_panel import CustomizePanel, apply_customization
 from .export_dialog import ExportDialog
 from .filter_panel import FilterPanel
+from .import_dialog import ImportDialog
 from .interactive_view import ChartView
 from .nl_query_bar import NLQueryBar
 from .settings_dialog import SettingsDialog
@@ -188,6 +191,10 @@ class MainWindow(QMainWindow):
         self.why_label.setPlaceholderText("The reasoning behind the selected chart appears here.")
         recommend_layout.addWidget(self.why_label)
 
+        self.customize_panel = CustomizePanel(recommend_page)
+        self.customize_panel.customized.connect(self._on_customized)
+        recommend_layout.addWidget(self.customize_panel)
+
         self.refine_button = QPushButton("Ask the model for a second opinion", recommend_page)
         self.refine_button.clicked.connect(self._on_refine)
         recommend_layout.addWidget(self.refine_button)
@@ -202,6 +209,12 @@ class MainWindow(QMainWindow):
         self.analysis_tabs.addTab(recommend_page, "Charts")
         self.analysis_tabs.addTab(self.type_panel, "Types")
         self.analysis_tabs.addTab(self.filter_panel, "Filters")
+
+        self.cleaning_panel = CleaningPanel(self)
+        self.cleaning_panel.cleaning_changed.connect(self._on_cleaning_changed)
+        self.cleaning_panel.remove_requested.connect(self._on_remove_step)
+        # Appended last so the tab indices stored in existing sessions keep their meaning.
+        self.analysis_tabs.addTab(self.cleaning_panel, "Cleaning")
 
         self.analysis_dock = QDockWidget("Analysis", self)
         self.analysis_dock.setWidget(self.analysis_tabs)
@@ -220,6 +233,11 @@ class MainWindow(QMainWindow):
         open_action.setShortcut(QKeySequence.StandardKey.Open)
         open_action.triggered.connect(self.choose_file)
         file_menu.addAction(open_action)
+
+        open_options_action = QAction("Open with &options…", self)
+        open_options_action.setShortcut("Ctrl+Shift+O")
+        open_options_action.triggered.connect(self.choose_file_with_options)
+        file_menu.addAction(open_options_action)
 
         self.recent_menu = file_menu.addMenu("Open &recent")
         self._rebuild_recent_menu()
@@ -255,6 +273,17 @@ class MainWindow(QMainWindow):
         quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
+
+        edit_menu = self.menuBar().addMenu("&Edit")
+        self.undo_action = QAction("&Undo", self)
+        self.undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        self.undo_action.triggered.connect(self.undo)
+        edit_menu.addAction(self.undo_action)
+        self.redo_action = QAction("&Redo", self)
+        self.redo_action.setShortcuts([QKeySequence.StandardKey.Redo, QKeySequence("Ctrl+Shift+Z")])
+        self.redo_action.triggered.connect(self.redo)
+        edit_menu.addAction(self.redo_action)
+        self._sync_history_actions()
 
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self.data_dock.toggleViewAction())
@@ -313,7 +342,17 @@ class MainWindow(QMainWindow):
         if path:
             self.open_path(path)
 
-    def open_path(self, path: str | Path) -> None:
+    def choose_file_with_options(self) -> None:
+        """Pick a file, then set delimiter, encoding, number format, or sheet before opening."""
+        start = str(self.settings.value("paths/last_dir", str(Path.home())))
+        path, _ = QFileDialog.getOpenFileName(self, "Open dataset", start, _OPEN_FILTER)
+        if not path:
+            return
+        dialog = ImportDialog(path, self)
+        if dialog.exec() == ImportDialog.DialogCode.Accepted:
+            self.open_path(path, options=dialog.options())
+
+    def open_path(self, path: str | Path, *, options: dict[str, Any] | None = None) -> None:
         """Open a dataset or a session file, on a worker thread."""
         path = Path(path).expanduser()
         if not path.exists():
@@ -332,7 +371,7 @@ class MainWindow(QMainWindow):
             self._session_view = dict(session.view)
             self._run(self._load_session_task, session, path, label=f"Restoring {path.name}…")
         else:
-            self._run(self._load_dataset_task, path, label=f"Loading {path.name}…")
+            self._run(self._load_dataset_task, path, options or {}, label=f"Loading {path.name}…")
 
     def _confirm_session_queries(self, session: Session) -> bool:
         """Ask before replaying query filters from a session file.
@@ -379,7 +418,7 @@ class MainWindow(QMainWindow):
         return False
 
     def _load_dataset_task(
-        self, path: Path, progress: Any = None
+        self, path: Path, options: dict[str, Any] | None = None, progress: Any = None
     ) -> tuple[Analysis, str | None, Path | None]:
         """Worker body: load and clean a dataset."""
         if progress:
@@ -387,6 +426,7 @@ class MainWindow(QMainWindow):
         analysis = Analysis.from_file(
             path,
             large_file_mb=float(self.settings.value("performance/large_file_mb", 500)),
+            options=options or None,
         )
         if progress:
             progress(90, "Choosing a chart…")
@@ -434,6 +474,8 @@ class MainWindow(QMainWindow):
         name = analysis.load_result.path.name
         self.setWindowTitle(f"{name} — {__app_name__}")
         self.filter_panel.set_filters(analysis.pipeline.filters)
+        self._sync_cleaning_panel()
+        self._sync_history_actions()
         view, self._session_view = self._session_view, {}
         if session_path is not None:
             self._restore_view(view)
@@ -511,6 +553,17 @@ class MainWindow(QMainWindow):
         self._show_why(spec)
         self._render_current()
 
+    def _on_customized(self, values: dict[str, Any]) -> None:
+        """Apply title, labels, scales, and palette from the Customize panel."""
+        if self.analysis is None or self.analysis.spec is None:
+            return
+        try:
+            self.analysis.choose(apply_customization(self.analysis.spec, values))
+        except PlotaVizError as exc:
+            self._error("That customization does not fit this chart", str(exc))
+            return
+        self._render_current()
+
     def _show_why(self, spec: ChartSpec | None) -> None:
         """Display the justification for the current chart."""
         self.why_label.setPlainText(spec.why if spec and spec.why else "")
@@ -520,6 +573,9 @@ class MainWindow(QMainWindow):
         if self.analysis is None or self.analysis.spec is None:
             self.chart_view.show_message("No chart is selected yet.")
             return
+        # The builder row and the customize panel always mirror the chart on screen.
+        self.nl_bar.show_spec(self.analysis.spec, announce=False)
+        self.customize_panel.set_spec(self.analysis.spec)
         try:
             notes = self.chart_view.render_spec(
                 self.analysis.df,
@@ -558,18 +614,67 @@ class MainWindow(QMainWindow):
             on_failed=lambda message, _trace: self.filter_panel.show_query_error(message),
         )
 
+    def _on_cleaning_changed(self, settings: dict[str, Any]) -> None:
+        """Swap the cleaning steps for the ones chosen in the Cleaning tab."""
+        if self.analysis is None:
+            return
+        analysis, chosen = self.analysis, dict(settings)
+        self._replay("Cleaning…", lambda: analysis.set_cleaning(**chosen))
+
+    def _on_remove_step(self, index: int) -> None:
+        """Delete one pipeline step."""
+        if self.analysis is None:
+            return
+        analysis = self.analysis
+        self._replay("Removing step…", lambda: analysis.remove_step(index), sync_panels=True)
+
+    def undo(self) -> None:
+        """Revert the last change to filters, types, or cleaning."""
+        if self.analysis is not None and self.analysis.can_undo:
+            analysis = self.analysis
+            self._replay("Undoing…", analysis.undo, sync_panels=True)
+
+    def redo(self) -> None:
+        """Re-apply the last undone change."""
+        if self.analysis is not None and self.analysis.can_redo:
+            analysis = self.analysis
+            self._replay("Redoing…", analysis.redo, sync_panels=True)
+
+    def _sync_history_actions(self) -> None:
+        """Enable Undo/Redo only when there is something to undo or redo."""
+        self.undo_action.setEnabled(bool(self.analysis and self.analysis.can_undo))
+        self.redo_action.setEnabled(bool(self.analysis and self.analysis.can_redo))
+
+    def _sync_cleaning_panel(self) -> None:
+        """Show the analysis's current cleaning settings and step list."""
+        if self.analysis is None:
+            return
+        reports = self.analysis.result.reports if self.analysis.result else []
+        self.cleaning_panel.set_state(
+            self.analysis.cleaning(), list(self.analysis.pipeline), reports
+        )
+
     def _replay(
         self,
         label: str,
         change: Callable[[], Any],
         *,
         on_failed: Callable[[str, str], None] | None = None,
+        sync_panels: bool = False,
     ) -> None:
         """Apply a state change that replays the pipeline, on the worker thread.
 
         If another task is running the replay is queued, not dropped: dropping it used to leave
         the panels showing a type or filter the data did not reflect.
+
+        Args:
+            sync_panels: Rewrite the filter and type panels from the analysis afterwards. Needed
+                when the change did not come from those panels (undo, redo, removing a step);
+                skipped otherwise so edits made while the replay ran are not overwritten.
         """
+
+        def refresh(*_: object) -> None:
+            self._after_rerun(sync_panels=sync_panels)
 
         def task(progress: Any = None) -> None:
             if progress:
@@ -579,18 +684,29 @@ class MainWindow(QMainWindow):
         self._run(
             task,
             label=label,
-            on_finished=lambda _: self._after_rerun(),
-            on_failed=on_failed,
+            on_finished=refresh,
+            on_failed=on_failed
+            or (lambda message, trace: self._error("That change failed", message, detail=trace)),
             # The replay itself cannot be interrupted, and it has already changed the analysis by
             # the time it returns — so a cancelled replay still refreshes the panels.
-            on_cancelled=self._after_rerun,
+            on_cancelled=refresh,
             queue=True,
         )
 
-    def _after_rerun(self) -> None:
+    def _after_rerun(self, *, sync_panels: bool = False) -> None:
         """Refresh every panel after a pipeline replay."""
         if self.analysis is None:
             return
+        self._sync_cleaning_panel()
+        self._sync_history_actions()
+        if sync_panels:
+            self.filter_panel.set_filters(self.analysis.pipeline.filters)
+            if self.analysis.profile:
+                self.type_panel.set_profile(
+                    self.analysis.profile,
+                    self.analysis.type_overrides,
+                    inferred=self.analysis.inferred_types,
+                )
         self.preview_model.set_frame(self.analysis.df, self.analysis.profile)
         self.preview_status.setText(self.preview_model.status_text())
         if self.analysis.result:

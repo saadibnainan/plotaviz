@@ -130,6 +130,7 @@ def load(
     sheet: str | int | None = None,
     force_engine: str | None = None,
     known_hash: str | None = None,
+    options: dict[str, Any] | None = None,
 ) -> LoadResult:
     """Read a dataset from disk.
 
@@ -143,6 +144,9 @@ def load(
             tests and for users who know their machine.
         known_hash: SHA-256 the caller already computed for this file (a session restore does),
             to skip hashing it again.
+        options: Explicit reader settings from the import dialog, overriding detection:
+            ``sep``, ``encoding``, ``decimal``, ``thousands``, ``header`` (row number, or
+            ``None`` for no header row) for delimited text, and ``sheet`` for Excel.
 
     Returns:
         A :class:`LoadResult`.
@@ -171,6 +175,10 @@ def load(
     is_large = (size_bytes / (1024 * 1024)) > large_file_mb
     use_polars = force_engine == "polars" or (force_engine is None and is_large)
 
+    options = dict(options or {})
+    if sheet is None and "sheet" in options:
+        sheet = options["sheet"]
+
     if suffix in EXCEL_SUFFIXES:
         result = _load_excel(path, sheet=sheet)
     elif suffix in PARQUET_SUFFIXES:
@@ -178,7 +186,10 @@ def load(
     elif suffix in JSON_SUFFIXES:
         result = _load_json(path)
     else:
-        result = _load_csv(path, use_polars=use_polars, sample_rows=sample_rows)
+        # Explicit options are a pandas feature set; the polars fast path honours only defaults.
+        result = _load_csv(
+            path, use_polars=use_polars and not options, sample_rows=sample_rows, options=options
+        )
 
     if result.df.empty:
         raise LoadError(
@@ -199,9 +210,28 @@ def load(
 # ---------------------------------------------------------------------------- readers
 
 
-def _load_csv(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResult:
-    """Read a delimited text file, sniffing the separator and retrying on encoding errors."""
-    delimiter = sniff_delimiter(path)
+def _load_csv(
+    path: Path, *, use_polars: bool, sample_rows: int, options: dict[str, Any] | None = None
+) -> LoadResult:
+    """Read a delimited text file, sniffing the separator and retrying on encoding errors.
+
+    Anything in ``options`` (from the import dialog) wins over detection: a chosen delimiter is
+    not sniffed, a chosen encoding is not retried, a chosen decimal mark switches off the
+    decimal-comma heuristic.
+    """
+    options = dict(options or {})
+    delimiter = str(options.get("sep") or sniff_delimiter(path))
+    encodings = (
+        (str(options["encoding"]),)
+        if options.get("encoding")
+        else (
+            "utf-8",
+            *_ENCODING_FALLBACKS,
+        )
+    )
+    extra: dict[str, Any] = {
+        key: options[key] for key in ("decimal", "thousands", "header") if key in options
+    }
 
     if use_polars:
         try:
@@ -241,9 +271,9 @@ def _load_csv(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResult:
 
     notes: list[str] = []
     last_error: Exception | None = None
-    for encoding in ("utf-8", *_ENCODING_FALLBACKS):
+    for encoding in encodings:
         try:
-            df = pd.read_csv(path, sep=delimiter, encoding=encoding, low_memory=False)
+            df = pd.read_csv(path, sep=delimiter, encoding=encoding, low_memory=False, **extra)
         except UnicodeDecodeError as exc:
             last_error = exc
             continue
@@ -254,14 +284,15 @@ def _load_csv(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResult:
                 f"{path.name} is malformed and could not be parsed.",
                 hint=f"Detected delimiter {delimiter!r}. Underlying error: {exc}",
             ) from exc
-        options: dict[str, Any] = {}
+        used: dict[str, Any] = dict(extra)
         if delimiter != ",":
-            options["sep"] = delimiter
+            used["sep"] = delimiter
         if encoding != "utf-8":
-            notes.append(f"File is not UTF-8; read it as {encoding}.")
-            options["encoding"] = encoding
+            if "encoding" not in options:
+                notes.append(f"File is not UTF-8; read it as {encoding}.")
+            used["encoding"] = encoding
 
-        locale_options = _decimal_comma_options(df, delimiter)
+        locale_options = {} if "decimal" in extra else _decimal_comma_options(df, delimiter)
         if locale_options:
             try:
                 df = pd.read_csv(
@@ -275,13 +306,13 @@ def _load_csv(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResult:
             except (pd.errors.ParserError, ValueError):
                 pass  # keep the first read; the numbers stay text, which is visible and fixable
             else:
-                options.update(locale_options)
+                used.update(locale_options)
                 mark = "comma decimals" + (
                     " and dot thousands separators" if "thousands" in locale_options else ""
                 )
                 notes.append(f"Numbers use {mark} (European format); read them as numbers.")
 
-        return LoadResult(df=df, path=path, engine="pandas", notes=notes, read_options=options)
+        return LoadResult(df=df, path=path, engine="pandas", notes=notes, read_options=used)
 
     raise LoadError(
         f"Could not decode {path.name} with any supported encoding.",
@@ -350,7 +381,8 @@ def _load_excel(path: Path, *, sheet: str | int | None) -> LoadResult:
     if len(book.sheet_names) > 1:
         chosen = book.sheet_names[target] if isinstance(target, int) else target
         notes.append(f"Workbook has {len(book.sheet_names)} sheets; loaded {chosen!r}.")
-    return LoadResult(df=df, path=path, engine="pandas", notes=notes)
+    read_options = {"sheet_name": target} if target != 0 else {}
+    return LoadResult(df=df, path=path, engine="pandas", notes=notes, read_options=read_options)
 
 
 def _load_json(path: Path) -> LoadResult:
@@ -453,10 +485,12 @@ def read_code_for(path: str | Path, options: dict[str, Any] | None = None) -> st
     suffix = path.suffix.lower()
     literal = repr(str(path))
     if options and suffix in CSV_SUFFIXES:
-        keys = ("sep", "encoding", "decimal", "thousands")
+        keys = ("sep", "encoding", "decimal", "thousands", "header")
         extra = "".join(f", {k}={options[k]!r}" for k in keys if k in options)
         return f"pd.read_csv({literal}{extra})"
     if suffix in EXCEL_SUFFIXES:
+        if options and "sheet_name" in options:
+            return f"pd.read_excel({literal}, sheet_name={options['sheet_name']!r})"
         return f"pd.read_excel({literal})"
     if suffix in PARQUET_SUFFIXES:
         return f"pd.read_parquet({literal})"

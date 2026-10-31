@@ -186,10 +186,16 @@ class TestPipeline:
         )
 
         assert "total_revenue" in result.df.columns  # renamed
-        assert result.df["total_revenue"].isna().sum() == 0  # filled
+        assert result.df["total_revenue"].isna().sum() == 1  # left missing by default
         assert len(result.df) == 9  # one duplicate removed
         assert result.rows_removed == 1
         assert "Removed 1 duplicate row" in result.cleaning_report()
+
+    def test_imputation_is_opt_in(self, messy_df: pd.DataFrame) -> None:
+        result = default_pipeline({"total_revenue": "numeric"}, missing_strategy="median").run(
+            messy_df
+        )
+        assert result.df["total_revenue"].isna().sum() == 0
 
     def test_report_covers_every_step(self, messy_df: pd.DataFrame) -> None:
         pipeline = default_pipeline({})

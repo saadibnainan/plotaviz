@@ -29,6 +29,38 @@ MAX_POINTS = 100_000
 #: Default cap on distinct categories drawn on a categorical axis.
 MAX_CATEGORIES = 30
 
+#: Single-series colour when no palette is chosen.
+DEFAULT_COLOR = "#4C78A8"
+
+#: Okabe–Ito: eight colours that stay distinguishable under the common forms of colour-vision
+#: deficiency. Selected with ``options["palette"] = "colorblind"``.
+COLORBLIND_PALETTE: tuple[str, ...] = (
+    "#0072B2",
+    "#E69F00",
+    "#009E73",
+    "#D55E00",
+    "#CC79A7",
+    "#56B4E9",
+    "#F0E442",
+    "#000000",
+)
+
+#: Named palettes for ``options["palette"]``. Anything else means the renderer's default.
+PALETTES: dict[str, tuple[str, ...]] = {"colorblind": COLORBLIND_PALETTE}
+
+
+def palette_for(spec: ChartSpec) -> list[str] | None:
+    """The spec's discrete colour sequence, or ``None`` for the renderer's default."""
+    palette = PALETTES.get(str(spec.options.get("palette") or ""))
+    return list(palette) if palette else None
+
+
+def primary_color(spec: ChartSpec) -> str:
+    """The colour for a single-series chart."""
+    palette = palette_for(spec)
+    return palette[0] if palette else DEFAULT_COLOR
+
+
 #: Label used for the bucket holding categories beyond the cap.
 OTHER_LABEL = "Other"
 
@@ -429,16 +461,26 @@ def build_plotly(df: pd.DataFrame, spec: ChartSpec, *, prepared: PreparedData | 
     frame, spec = data.df, data.spec
     title = spec.display_title()
     opts = spec.options
+    sequence = palette_for(spec)
+    pal: dict[str, Any] = {"color_discrete_sequence": sequence} if sequence else {}
 
     try:
         chart = spec.chart
         if chart == "histogram":
             fig = px.histogram(
-                frame, x=spec.x, color=spec.color, nbins=opts.get("bins"), title=title
+                frame, x=spec.x, color=spec.color, nbins=opts.get("bins"), title=title, **pal
             )
         elif chart == "kde":
             grid, density = kde_curve(frame[spec.x])
-            fig = go.Figure(go.Scatter(x=grid, y=density, fill="tozeroy", mode="lines"))
+            fig = go.Figure(
+                go.Scatter(
+                    x=grid,
+                    y=density,
+                    fill="tozeroy",
+                    mode="lines",
+                    line={"color": sequence[0]} if sequence else None,
+                )
+            )
             fig.update_layout(title=title, xaxis_title=spec.x, yaxis_title="density")
         elif chart in {"bar", "grouped_bar", "stacked_bar"}:
             fig = px.bar(
@@ -449,12 +491,13 @@ def build_plotly(df: pd.DataFrame, spec: ChartSpec, *, prepared: PreparedData | 
                 barmode="stack" if chart == "stacked_bar" or opts.get("stacked") else "group",
                 orientation=opts.get("orientation", "v"),
                 title=title,
+                **pal,
             )
         elif chart == "pie":
-            fig = px.pie(frame, names=spec.x, values=spec.y, title=title)
+            fig = px.pie(frame, names=spec.x, values=spec.y, title=title, **pal)
         elif chart == "treemap":
             path = [spec.x] if not spec.color else [spec.color, spec.x]
-            fig = px.treemap(frame, path=path, values=spec.y, title=title)
+            fig = px.treemap(frame, path=path, values=spec.y, title=title, **pal)
         elif chart == "scatter":
             fig = px.scatter(
                 frame,
@@ -464,24 +507,45 @@ def build_plotly(df: pd.DataFrame, spec: ChartSpec, *, prepared: PreparedData | 
                 opacity=opts.get("opacity", 0.75),
                 trendline="ols" if opts.get("trendline") and _has_statsmodels() else None,
                 title=title,
+                **pal,
             )
         elif chart == "line":
             fig = px.line(
-                frame, x=spec.x, y=spec.y, color=spec.color, markers=len(frame) < 200, title=title
+                frame,
+                x=spec.x,
+                y=spec.y,
+                color=spec.color,
+                markers=len(frame) < 200,
+                title=title,
+                **pal,
             )
         elif chart == "area":
-            fig = px.area(frame, x=spec.x, y=spec.y, color=spec.color, title=title)
+            fig = px.area(frame, x=spec.x, y=spec.y, color=spec.color, title=title, **pal)
         elif chart == "box":
             fig = px.box(
-                frame, x=spec.x, y=spec.y, color=spec.color, points="outliers", title=title
+                frame,
+                x=spec.x,
+                y=spec.y,
+                color=spec.color,
+                points="outliers",
+                title=title,
+                **pal,
             )
         elif chart == "violin":
-            fig = px.violin(frame, x=spec.x, y=spec.y, color=spec.color, box=True, title=title)
+            fig = px.violin(
+                frame, x=spec.x, y=spec.y, color=spec.color, box=True, title=title, **pal
+            )
         elif chart == "heatmap":
             value = spec.color or "count"
             value = value if value in frame.columns else frame.columns[-1]
             matrix = frame.pivot_table(index=spec.y, columns=spec.x, values=value, aggfunc="mean")
-            fig = px.imshow(matrix, aspect="auto", text_auto=matrix.size <= 100, title=title)
+            fig = px.imshow(
+                matrix,
+                aspect="auto",
+                text_auto=matrix.size <= 100,
+                title=title,
+                color_continuous_scale="cividis" if sequence else None,
+            )
         elif chart == "correlation_heatmap":
             corr = frame.corr(numeric_only=True)
             fig = px.imshow(
@@ -505,6 +569,10 @@ def build_plotly(df: pd.DataFrame, spec: ChartSpec, *, prepared: PreparedData | 
     except Exception as exc:
         raise PlotError(f"Could not draw the {spec.chart} chart.", hint=str(exc)) from exc
 
+    if opts.get("x_label"):
+        fig.update_xaxes(title_text=str(opts["x_label"]))
+    if opts.get("y_label"):
+        fig.update_yaxes(title_text=str(opts["y_label"]))
     if opts.get("log_y"):
         fig.update_yaxes(type="log")
     if opts.get("log_x"):
@@ -600,32 +668,40 @@ def build_matplotlib(
 
     try:
         if chart == "pair_plot":
-            fig = _mpl_pair_plot(frame, figsize=figsize, dpi=dpi)
+            fig = _mpl_pair_plot(frame, figsize=figsize, dpi=dpi, color=primary_color(spec))
             fig.suptitle(spec.display_title())
             return fig
 
         fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        sequence = palette_for(spec)
+        if sequence:
+            ax.set_prop_cycle(color=sequence)
 
         if chart == "histogram":
             ax.hist(
                 pd.to_numeric(frame[spec.x], errors="coerce").dropna(),
                 bins=opts.get("bins", "auto"),
-                color="#4C78A8",
+                color=primary_color(spec),
                 edgecolor="white",
             )
             ax.set_xlabel(str(spec.x))
             ax.set_ylabel("count")
         elif chart == "kde":
             grid, density = kde_curve(frame[spec.x])
-            ax.plot(grid, density, color="#4C78A8")
-            ax.fill_between(grid, density, alpha=0.3, color="#4C78A8")
+            ax.plot(grid, density, color=primary_color(spec))
+            ax.fill_between(grid, density, alpha=0.3, color=primary_color(spec))
             ax.set_xlabel(str(spec.x))
             ax.set_ylabel("density")
         elif chart in {"bar", "grouped_bar", "stacked_bar"}:
             _mpl_bar(ax, frame, spec, stacked=chart == "stacked_bar" or bool(opts.get("stacked")))
         elif chart == "pie":
             values = frame[spec.y] if spec.y and spec.y in frame else frame.iloc[:, -1]
-            ax.pie(values, labels=frame[spec.x].astype(str).tolist(), autopct="%1.1f%%")
+            ax.pie(
+                values,
+                labels=frame[spec.x].astype(str).tolist(),
+                autopct="%1.1f%%",
+                colors=sequence,
+            )
             ax.set_ylabel("")
         elif chart == "treemap":
             _mpl_treemap(ax, frame, spec)
@@ -638,7 +714,11 @@ def build_matplotlib(
         elif chart == "heatmap":
             value = spec.color if spec.color in frame.columns else frame.columns[-1]
             matrix = frame.pivot_table(index=spec.y, columns=spec.x, values=value, aggfunc="mean")
-            image = ax.imshow(matrix.to_numpy(dtype=float), aspect="auto", cmap="viridis")
+            image = ax.imshow(
+                matrix.to_numpy(dtype=float),
+                aspect="auto",
+                cmap="cividis" if sequence else "viridis",
+            )
             ax.set_xticks(
                 range(len(matrix.columns)),
                 [str(c) for c in matrix.columns],
@@ -675,6 +755,10 @@ def build_matplotlib(
                 ax.set_ylabel(str(spec.y))
             ax.grid(True, alpha=0.25, linestyle="--")
             ax.set_axisbelow(True)
+        if opts.get("x_label"):
+            ax.set_xlabel(str(opts["x_label"]))
+        if opts.get("y_label"):
+            ax.set_ylabel(str(opts["y_label"]))
 
         if data.sampled:
             fig.text(0.01, 0.01, data.sampling_notice, fontsize=8, color="#666")
@@ -692,14 +776,18 @@ def _mpl_bar(ax: Any, frame: pd.DataFrame, spec: ChartSpec, *, stacked: bool) ->
     x, y = str(spec.x), str(spec.y) if spec.y else None
     if y is None or y not in frame.columns:
         counts = frame[x].value_counts()
-        ax.bar([str(i) for i in counts.index], counts.to_numpy(), color="#4C78A8")
+        ax.bar([str(i) for i in counts.index], counts.to_numpy(), color=primary_color(spec))
         ax.set_ylabel("count")
     elif spec.color and spec.color in frame.columns:
         pivot = frame.pivot_table(index=x, columns=spec.color, values=y, aggfunc="mean")
-        pivot.plot(kind="bar", stacked=stacked, ax=ax, width=0.8)
+        pivot.plot(kind="bar", stacked=stacked, ax=ax, width=0.8, color=palette_for(spec))
         ax.legend(title=str(spec.color), fontsize=8)
     else:
-        ax.bar(frame[x].astype(str), pd.to_numeric(frame[y], errors="coerce"), color="#4C78A8")
+        ax.bar(
+            frame[x].astype(str),
+            pd.to_numeric(frame[y], errors="coerce"),
+            color=primary_color(spec),
+        )
     if len(ax.get_xticklabels()) > 6:
         ax.tick_params(axis="x", rotation=45)
         for label in ax.get_xticklabels():
@@ -714,7 +802,7 @@ def _mpl_scatter(ax: Any, frame: pd.DataFrame, spec: ChartSpec) -> None:
             ax.scatter(group[x], group[y], s=14, alpha=0.7, label=str(name))
         ax.legend(title=str(spec.color), fontsize=8)
     else:
-        ax.scatter(frame[x], frame[y], s=14, alpha=0.7, color="#4C78A8")
+        ax.scatter(frame[x], frame[y], s=14, alpha=0.7, color=primary_color(spec))
 
     if spec.options.get("trendline"):
         xs = pd.to_numeric(frame[x], errors="coerce")
@@ -738,9 +826,9 @@ def _mpl_line(ax: Any, frame: pd.DataFrame, spec: ChartSpec, *, area: bool) -> N
         ax.legend(title=str(spec.color), fontsize=8)
     else:
         ordered = frame.sort_values(x)
-        ax.plot(ordered[x], ordered[y], color="#4C78A8", linewidth=1.6)
+        ax.plot(ordered[x], ordered[y], color=primary_color(spec), linewidth=1.6)
         if area:
-            ax.fill_between(ordered[x], ordered[y], alpha=0.3, color="#4C78A8")
+            ax.fill_between(ordered[x], ordered[y], alpha=0.3, color=primary_color(spec))
     if pd.api.types.is_datetime64_any_dtype(frame[x]):
         ax.figure.autofmt_xdate()
 
@@ -833,7 +921,9 @@ def _remaining(pairs: list[tuple[str, float]], index: int, total: float) -> floa
     return rest / total if total else 0.0
 
 
-def _mpl_pair_plot(frame: pd.DataFrame, *, figsize: tuple[float, float], dpi: int) -> Any:
+def _mpl_pair_plot(
+    frame: pd.DataFrame, *, figsize: tuple[float, float], dpi: int, color: str = DEFAULT_COLOR
+) -> Any:
     """Scatter-matrix of up to five numeric columns, histograms on the diagonal."""
     import matplotlib.pyplot as plt
 
@@ -844,9 +934,9 @@ def _mpl_pair_plot(frame: pd.DataFrame, *, figsize: tuple[float, float], dpi: in
         for j, col_col in enumerate(cols):
             ax = axes[i][j]
             if i == j:
-                ax.hist(frame[row_col].dropna(), bins=20, color="#4C78A8", edgecolor="white")
+                ax.hist(frame[row_col].dropna(), bins=20, color=color, edgecolor="white")
             else:
-                ax.scatter(frame[col_col], frame[row_col], s=6, alpha=0.5, color="#4C78A8")
+                ax.scatter(frame[col_col], frame[row_col], s=6, alpha=0.5, color=color)
             if i == n - 1:
                 ax.set_xlabel(str(col_col), fontsize=8)
             if j == 0:

@@ -28,6 +28,13 @@ from .profiler import BOOLEAN, CATEGORICAL, DATETIME, NUMERIC, TEXT
 #: Missing-value strategies accepted by :class:`FillMissing`.
 FILL_STRATEGIES: tuple[str, ...] = ("drop", "mean", "median", "mode", "ffill", "bfill", "zero")
 
+#: Missing-value choices offered to users: ``"keep"`` (leave gaps alone — the default, because
+#: imputing silently invents data) or one of :data:`FILL_STRATEGIES`.
+MISSING_CHOICES: tuple[str, ...] = ("keep", *FILL_STRATEGIES)
+
+#: What to do with outliers: nothing, add ``<column>__outlier`` flags, or drop the rows.
+OUTLIER_ACTIONS: tuple[str, ...] = ("off", "flag", "drop")
+
 #: Outlier detection methods accepted by :class:`FlagOutliers`.
 OUTLIER_METHODS: tuple[str, ...] = ("iqr", "zscore")
 
@@ -821,7 +828,7 @@ class Pipeline:
 def default_pipeline(
     types: dict[str, str] | None = None,
     *,
-    missing_strategy: str = "median",
+    missing_strategy: str = "keep",
     flag_outliers: bool = True,
     deduplicate: bool = True,
 ) -> Pipeline:
@@ -832,7 +839,7 @@ def default_pipeline(
 
     Args:
         types: Column role decisions, including user overrides.
-        missing_strategy: One of :data:`FILL_STRATEGIES`.
+        missing_strategy: One of :data:`MISSING_CHOICES`. ``"keep"`` adds no missing-value step.
         flag_outliers: Whether to add outlier flag columns.
         deduplicate: Whether to drop duplicate rows.
     """
@@ -841,7 +848,8 @@ def default_pipeline(
         pipeline.add(CoerceTypes(types))
     if deduplicate:
         pipeline.add(Deduplicate())
-    pipeline.add(FillMissing(strategy=missing_strategy))
+    if missing_strategy != "keep":
+        pipeline.add(FillMissing(strategy=missing_strategy))
     if flag_outliers:
         pipeline.add(FlagOutliers())
     return pipeline

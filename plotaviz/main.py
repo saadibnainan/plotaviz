@@ -72,9 +72,9 @@ def build_parser() -> argparse.ArgumentParser:
     cleaning = parser.add_argument_group("cleaning")
     cleaning.add_argument(
         "--missing",
-        default="median",
-        choices=("drop", "mean", "median", "mode", "ffill", "bfill", "zero"),
-        help="missing-value strategy (default: median)",
+        default="keep",
+        choices=("keep", "drop", "mean", "median", "mode", "ffill", "bfill", "zero"),
+        help="missing-value handling (default: keep — gaps are left as gaps, not invented)",
     )
     cleaning.add_argument(
         "--no-outlier-flags", action="store_true", help="skip adding outlier flag columns"
