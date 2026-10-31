@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from ..core.errors import PlotError
-from ..core.plotter import build_matplotlib, build_plotly, prepare
+from ..core.plotter import MAX_POINTS, build_matplotlib, build_plotly, prepare
 from ..core.spec import ChartSpec
 
 #: Set once by :func:`webengine_available` so the probe import happens at most once.
@@ -93,7 +93,9 @@ class ChartView(QWidget):
 
     # ------------------------------------------------------------------ rendering
 
-    def render_spec(self, df: pd.DataFrame, spec: ChartSpec) -> list[str]:
+    def render_spec(
+        self, df: pd.DataFrame, spec: ChartSpec, *, max_points: int | None = None
+    ) -> list[str]:
         """Draw a chart.
 
         Args:
@@ -107,7 +109,7 @@ class ChartView(QWidget):
         Raises:
             PlotError: If the chart cannot be built. The caller shows this in a dialog.
         """
-        prepared = prepare(df, spec)
+        prepared = prepare(df, spec, max_points=max_points or MAX_POINTS)
         self.last_notes = list(prepared.notes)
 
         if self._interactive:
@@ -188,6 +190,12 @@ class ChartView(QWidget):
         The matplotlib toolbar is listed too: it is a separate widget from the canvas, and
         leaving it behind stacked one extra toolbar above the chart on every re-render.
         """
+        if self._canvas is not None:
+            # pyplot keeps every figure it creates until it is closed; without this each static
+            # re-render leaked the previous figure.
+            import matplotlib.pyplot as plt
+
+            plt.close(self._canvas.figure)
         for attr in ("_placeholder", "_toolbar", "_canvas", "_web"):
             widget = getattr(self, attr, None)
             if widget is not None:

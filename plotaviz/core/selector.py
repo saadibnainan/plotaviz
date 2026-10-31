@@ -263,12 +263,17 @@ class ChartSelector:
         """
         mapping = candidate.get("map") or {}
         if not mapping and candidate.get("chart") in MATRIX_CHARTS:
+            options = dict(candidate.get("options") or {})
+            # Pin the measure columns so identifiers stay out of the matrix in every renderer
+            # and in the generated script.
+            usable = set(columns.get(NUMERIC, []))
+            options.setdefault("columns", [c for c in profile.columns if c in usable])
             return [
                 ChartSpec(
                     chart=str(candidate["chart"]),
                     why=str(candidate.get("why", "")),
                     score=float(candidate.get("base", 0.5)),
-                    options=dict(candidate.get("options") or {}),
+                    options=options,
                     agg=candidate.get("agg"),
                 )
             ]
@@ -421,7 +426,10 @@ class ChartSelector:
                         f"{spec.y!r} is heavily skewed, which this chart shows better than "
                         "an average."
                     )
-                elif spec.chart in {"bar", "line", "scatter"}:
+                elif spec.chart in {"bar", "line", "scatter"} and (
+                    float(profile.columns[spec.y].stats.get("min", 0.0)) > 0
+                ):
+                    # A log axis cannot show zero or negative values — they would silently vanish.
                     spec.options.setdefault("log_y", True)
                     notes.append(f"{spec.y!r} is heavily skewed, so a log y axis is suggested.")
 

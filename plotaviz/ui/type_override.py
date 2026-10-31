@@ -88,15 +88,25 @@ class TypeOverridePanel(QWidget):
 
     # ------------------------------------------------------------------ population
 
-    def set_profile(self, profile: DatasetProfile, overrides: dict[str, str] | None = None) -> None:
+    def set_profile(
+        self,
+        profile: DatasetProfile,
+        overrides: dict[str, str] | None = None,
+        *,
+        inferred: dict[str, str] | None = None,
+    ) -> None:
         """Rebuild the panel for a dataset.
 
         Args:
-            profile: The current profile, whose inferred roles seed the dropdowns.
+            profile: The current profile.
             overrides: Corrections already in force, so reopening the panel shows them.
+            inferred: What inference chose before any correction. The profile's roles already
+                include the overrides, so without this a restored override looked "detected" —
+                it was dropped on the next Apply and "Reset" could not undo it.
         """
         self._profile = profile
         overrides = overrides or {}
+        inferred = inferred or {}
         self._combos.clear()
         self._inferred.clear()
 
@@ -104,7 +114,8 @@ class TypeOverridePanel(QWidget):
         self.table.setRowCount(len(columns))
 
         for row, prof in enumerate(columns):
-            self._inferred[prof.name] = prof.role
+            detected_role = inferred.get(prof.name, prof.role)
+            self._inferred[prof.name] = detected_role
 
             name_item = QTableWidgetItem(prof.name)
             name_item.setToolTip(
@@ -112,7 +123,7 @@ class TypeOverridePanel(QWidget):
             )
             self.table.setItem(row, 0, name_item)
 
-            detected = QTableWidgetItem(_ROLE_LABELS.get(prof.role, prof.role))
+            detected = QTableWidgetItem(_ROLE_LABELS.get(detected_role, detected_role))
             detected.setForeground(Qt.GlobalColor.gray)
             self.table.setItem(row, 1, detected)
 

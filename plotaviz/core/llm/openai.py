@@ -13,8 +13,10 @@ class OpenAIProvider(Provider):
     """
 
     name = "openai"
-    default_model = "gpt-4o-mini"
-    available_models = ("gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o4-mini")
+    # Suggestions only — the model box in Settings is editable. Checked against OpenAI's
+    # supported-model list in October 2026.
+    default_model = "gpt-5.4-mini"
+    available_models = ("gpt-5.4-mini", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-6.1-sol")
 
     def complete(self, system: str, user: str, *, timeout: float) -> str:
         """Send one message and return the text of the reply."""
@@ -36,7 +38,8 @@ class OpenAIProvider(Provider):
                 ],
                 # Ask for JSON explicitly; the base class still tolerates a chatty reply.
                 response_format={"type": "json_object"},
-                max_tokens=1024,
+                # GPT-5-era models reject `max_tokens` on Chat Completions; this works for all.
+                max_completion_tokens=1024,
             )
         except openai.AuthenticationError as exc:
             raise LLMError(

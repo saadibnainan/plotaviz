@@ -28,6 +28,13 @@ from .profiler import BOOLEAN, CATEGORICAL, DATETIME, NUMERIC, TEXT
 #: Missing-value strategies accepted by :class:`FillMissing`.
 FILL_STRATEGIES: tuple[str, ...] = ("drop", "mean", "median", "mode", "ffill", "bfill", "zero")
 
+#: Missing-value choices offered to users: ``"keep"`` (leave gaps alone — the default, because
+#: imputing silently invents data) or one of :data:`FILL_STRATEGIES`.
+MISSING_CHOICES: tuple[str, ...] = ("keep", *FILL_STRATEGIES)
+
+#: What to do with outliers: nothing, add ``<column>__outlier`` flags, or drop the rows.
+OUTLIER_ACTIONS: tuple[str, ...] = ("off", "flag", "drop")
+
 #: Outlier detection methods accepted by :class:`FlagOutliers`.
 OUTLIER_METHODS: tuple[str, ...] = ("iqr", "zscore")
 
@@ -238,15 +245,38 @@ class CoerceTypes(Step):
         )
 
     def to_code(self) -> list[str]:
+        # Mirrors apply() exactly: `format="mixed"` for dates (without it pandas infers one format
+        # from the first value and silently drops the rest), the same true/false token mapping,
+        # and the object cast for categories, which changes how later steps treat the column.
         lines: list[str] = []
+        needs_bool_helper = False
         for col, role in self.types.items():
             if role == DATETIME:
-                lines.append(f"df[{col!r}] = pd.to_datetime(df[{col!r}], errors='coerce')")
+                lines.append(
+                    f"df[{col!r}] = pd.to_datetime(df[{col!r}], errors='coerce', format='mixed')"
+                )
             elif role == NUMERIC:
                 lines.append(f"df[{col!r}] = pd.to_numeric(df[{col!r}], errors='coerce')")
             elif role == BOOLEAN:
-                lines.append(f"df[{col!r}] = df[{col!r}].astype('boolean')")
-        return ["# Column types", *lines] if lines else []
+                needs_bool_helper = True
+                lines.append(f"df[{col!r}] = _to_boolean(df[{col!r}])")
+            elif role in (CATEGORICAL, TEXT):
+                lines.append(f"df[{col!r}] = df[{col!r}].astype('object')")
+        if not lines:
+            return []
+        helper = (
+            [
+                "def _to_boolean(s):",
+                "    if pd.api.types.is_bool_dtype(s):",
+                "        return s.astype('boolean')",
+                f"    tokens = {_BOOLEAN_TOKENS!r}",
+                "    return s.map(lambda v: tokens.get(str(v).strip().lower())).astype('boolean')",
+                "",
+            ]
+            if needs_bool_helper
+            else []
+        )
+        return ["# Column types", *helper, *lines]
 
 
 class FillMissing(Step):
@@ -288,11 +318,17 @@ class FillMissing(Step):
             for col in touched:
                 series = out[col]
                 value: Any = None
-                if self.strategy == "mean" and pd.api.types.is_numeric_dtype(series):
+                # Booleans count as numeric to pandas, but a median of True/False is 0.5 or 1.0
+                # and filling a boolean column with it raises — which used to abort the whole
+                # load for any yes/no column with a blank cell. They are left missing instead.
+                is_measure = pd.api.types.is_numeric_dtype(
+                    series
+                ) and not pd.api.types.is_bool_dtype(series)
+                if self.strategy == "mean" and is_measure:
                     value = series.mean()
-                elif self.strategy == "median" and pd.api.types.is_numeric_dtype(series):
+                elif self.strategy == "median" and is_measure:
                     value = series.median()
-                elif self.strategy == "zero" and pd.api.types.is_numeric_dtype(series):
+                elif self.strategy == "zero" and is_measure:
                     value = 0
                 elif self.strategy == "mode":
                     modes = series.mode(dropna=True)
@@ -327,30 +363,46 @@ class FillMissing(Step):
         )
 
     def to_code(self) -> list[str]:
-        cols = f"{self.columns!r}" if self.columns else "None"
+        # `select_dtypes('number')` excludes booleans, matching apply(), which leaves them alone.
+        targets = (
+            f"[_c for _c in {self.columns!r} if _c in df.columns]"
+            if self.columns
+            else "list(df.columns)"
+        )
+        numeric = (
+            f"[_c for _c in df.select_dtypes('number').columns if _c in {self.columns!r}]"
+            if self.columns
+            else "df.select_dtypes('number').columns"
+        )
         if self.strategy == "drop":
-            subset = f"subset={cols}" if self.columns else ""
+            subset = f"subset={targets}" if self.columns else ""
             return ["# Missing values: drop", f"df = df.dropna({subset})"]
         if self.strategy in {"ffill", "bfill"}:
             method = "ffill" if self.strategy == "ffill" else "bfill"
-            return [f"# Missing values: {method}", f"df = df.{method}()"]
+            if not self.columns:
+                return [f"# Missing values: {method}", f"df = df.{method}()"]
+            return [
+                f"# Missing values: {method}",
+                f"_cols = {targets}",
+                f"df[_cols] = df[_cols].{method}()",
+            ]
         if self.strategy == "zero":
             return [
                 "# Missing values: fill numeric columns with 0",
-                "_num = df.select_dtypes('number').columns",
+                f"_num = {numeric}",
                 "df[_num] = df[_num].fillna(0)",
             ]
         if self.strategy == "mode":
             return [
                 "# Missing values: fill with the most frequent value",
-                "for _c in df.columns:",
+                f"for _c in {targets}:",
                 "    _modes = df[_c].mode(dropna=True)",
                 "    if not _modes.empty:",
                 "        df[_c] = df[_c].fillna(_modes.iloc[0])",
             ]
         return [
             f"# Missing values: fill numeric columns with the column {self.strategy}",
-            "_num = df.select_dtypes('number').columns",
+            f"_num = {numeric}",
             f"df[_num] = df[_num].fillna(df[_num].{self.strategy}())",
         ]
 
@@ -612,10 +664,10 @@ class ColumnFilter(Step):
         series = df[self.column]
         if self.op == "between":
             low, high = self.value
-            if pd.api.types.is_datetime64_any_dtype(series):
-                low, high = pd.to_datetime(low), pd.to_datetime(high)
-            mask = series.between(low, high)
             described = f"{self.column} between {low} and {high}"
+            if pd.api.types.is_datetime64_any_dtype(series):
+                low, high = _date_bounds(low, high, getattr(series.dt, "tz", None))
+            mask = series.between(low, high)
         else:
             allowed = list(self.value)
             mask = series.isin(allowed)
@@ -634,6 +686,18 @@ class ColumnFilter(Step):
     def to_code(self) -> list[str]:
         if self.op == "between":
             low, high = self.value
+            if _is_date_only(high):
+                # A date-only upper bound means "through the end of that day", and the bounds
+                # take the column's timezone — exactly as apply() does.
+                return [
+                    "# Column filter (the end date is inclusive)",
+                    f"_lo = pd.Timestamp({low!r})",
+                    f"_hi = pd.Timestamp({high!r}) + pd.Timedelta(days=1) - pd.Timedelta(1, 'ns')",
+                    f"_tz = getattr(df[{self.column!r}].dt, 'tz', None)",
+                    "if _tz is not None:",
+                    "    _lo, _hi = _lo.tz_localize(_tz), _hi.tz_localize(_tz)",
+                    f"df = df[df[{self.column!r}].between(_lo, _hi)]",
+                ]
             return [
                 "# Column filter",
                 f"df = df[df[{self.column!r}].between({low!r}, {high!r})]",
@@ -769,7 +833,7 @@ class Pipeline:
 def default_pipeline(
     types: dict[str, str] | None = None,
     *,
-    missing_strategy: str = "median",
+    missing_strategy: str = "keep",
     flag_outliers: bool = True,
     deduplicate: bool = True,
 ) -> Pipeline:
@@ -780,7 +844,7 @@ def default_pipeline(
 
     Args:
         types: Column role decisions, including user overrides.
-        missing_strategy: One of :data:`FILL_STRATEGIES`.
+        missing_strategy: One of :data:`MISSING_CHOICES`. ``"keep"`` adds no missing-value step.
         flag_outliers: Whether to add outlier flag columns.
         deduplicate: Whether to drop duplicate rows.
     """
@@ -789,7 +853,8 @@ def default_pipeline(
         pipeline.add(CoerceTypes(types))
     if deduplicate:
         pipeline.add(Deduplicate())
-    pipeline.add(FillMissing(strategy=missing_strategy))
+    if missing_strategy != "keep":
+        pipeline.add(FillMissing(strategy=missing_strategy))
     if flag_outliers:
         pipeline.add(FlagOutliers())
     return pipeline
@@ -798,25 +863,51 @@ def default_pipeline(
 # ---------------------------------------------------------------------------- helpers
 
 
+#: Text tokens read as booleans. Shared by :func:`_to_boolean` and the code it generates.
+_BOOLEAN_TOKENS: dict[str, bool] = {
+    "true": True,
+    "yes": True,
+    "y": True,
+    "t": True,
+    "1": True,
+    "on": True,
+    "false": False,
+    "no": False,
+    "n": False,
+    "f": False,
+    "0": False,
+    "off": False,
+}
+
+_DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _is_date_only(value: Any) -> bool:
+    """Whether a filter bound is a bare ``YYYY-MM-DD`` date, as the date pickers produce."""
+    return isinstance(value, str) and bool(_DATE_ONLY.match(value.strip()))
+
+
+def _date_bounds(low: Any, high: Any, tz: Any = None) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Turn a date filter's bounds into timestamps comparable with the column.
+
+    A bare date as the upper bound is extended to the last instant of that day — "up to
+    2024-03-31" must include rows timestamped 2024-03-31 14:00 — and both bounds take the
+    column's timezone so a tz-aware column does not raise on comparison.
+    """
+    start, end = pd.Timestamp(low), pd.Timestamp(high)
+    if _is_date_only(high):
+        end = end + pd.Timedelta(days=1) - pd.Timedelta(1, "ns")
+    if tz is not None:
+        start = start.tz_localize(tz) if start.tzinfo is None else start.tz_convert(tz)
+        end = end.tz_localize(tz) if end.tzinfo is None else end.tz_convert(tz)
+    return start, end
+
+
 def _to_boolean(series: pd.Series) -> pd.Series:
     """Coerce common truthy/falsey tokens to a nullable boolean dtype."""
     if pd.api.types.is_bool_dtype(series):
         return series.astype("boolean")
-    mapping = {
-        "true": True,
-        "yes": True,
-        "y": True,
-        "t": True,
-        "1": True,
-        "on": True,
-        "false": False,
-        "no": False,
-        "n": False,
-        "f": False,
-        "0": False,
-        "off": False,
-    }
-    return series.map(lambda v: mapping.get(str(v).strip().lower())).astype("boolean")
+    return series.map(lambda v: _BOOLEAN_TOKENS.get(str(v).strip().lower())).astype("boolean")
 
 
 def _stringify(value: Any) -> Any:

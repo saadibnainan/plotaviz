@@ -13,6 +13,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,21 @@ DEFAULT_SAMPLE_ROWS: int = 200_000
 #: Encodings tried in order when the default UTF-8 read fails.
 _ENCODING_FALLBACKS = ("utf-8-sig", "latin-1", "cp1252")
 
+#: A decimal written with a comma, optionally with dot thousands grouping: ``1,5``, ``1.234,56``.
+_COMMA_DECIMAL = re.compile(r"^\s*[+-]?(?:\d{1,3}(?:\.\d{3})+|\d+),\d+\s*$")
+
+#: A comma number with exactly three digits after the comma and no dot grouping: ``1,250``.
+_THREE_DECIMALS = re.compile(r"^\s*[+-]?\d{1,3},\d{3}\s*$")
+
+#: A day-first dotted date: ``01.05.2024``.
+_DOTTED_DATE = re.compile(r"^\s*\d{1,2}\.\d{1,2}\.\d{2,4}(?:\s.*)?$")
+
+#: Dot used as a thousands separator inside a comma-decimal number.
+_DOT_GROUPING = re.compile(r"\d\.\d{3}(?:,|$)")
+
+#: Delimiters for which a comma cannot be the field separator, so it may be the decimal mark.
+_DECIMAL_COMMA_DELIMITERS = {";", "\t", "|"}
+
 
 @dataclass
 class LoadResult:
@@ -52,6 +68,9 @@ class LoadResult:
             underneath a saved project.
         size_bytes: Source file size.
         notes: Human-readable remarks worth surfacing (fallback encoding used, sheet chosen).
+        read_options: Reader keyword arguments that differ from the defaults (``sep``,
+            ``encoding``, ``decimal``, ``thousands``). The code generator replays them so the
+            exported script reads the file exactly as PlotaViz did.
     """
 
     df: pd.DataFrame
@@ -62,6 +81,7 @@ class LoadResult:
     file_hash: str = ""
     size_bytes: int = 0
     notes: list[str] = field(default_factory=list)
+    read_options: dict[str, Any] = field(default_factory=dict)
 
     @property
     def rows_loaded(self) -> int:
@@ -115,6 +135,8 @@ def load(
     sample_rows: int = DEFAULT_SAMPLE_ROWS,
     sheet: str | int | None = None,
     force_engine: str | None = None,
+    known_hash: str | None = None,
+    options: dict[str, Any] | None = None,
 ) -> LoadResult:
     """Read a dataset from disk.
 
@@ -126,6 +148,11 @@ def load(
         sheet: Excel sheet name or index. Defaults to the first sheet.
         force_engine: ``"pandas"`` or ``"polars"`` to override the size heuristic. Mostly for
             tests and for users who know their machine.
+        known_hash: SHA-256 the caller already computed for this file (a session restore does),
+            to skip hashing it again.
+        options: Explicit reader settings from the import dialog, overriding detection:
+            ``sep``, ``encoding``, ``decimal``, ``thousands``, ``header`` (row number, or
+            ``None`` for no header row) for delimited text, and ``sheet`` for Excel.
 
     Returns:
         A :class:`LoadResult`.
@@ -154,6 +181,10 @@ def load(
     is_large = (size_bytes / (1024 * 1024)) > large_file_mb
     use_polars = force_engine == "polars" or (force_engine is None and is_large)
 
+    options = dict(options or {})
+    if sheet is None and "sheet" in options:
+        sheet = options["sheet"]
+
     if suffix in EXCEL_SUFFIXES:
         result = _load_excel(path, sheet=sheet)
     elif suffix in PARQUET_SUFFIXES:
@@ -161,7 +192,15 @@ def load(
     elif suffix in JSON_SUFFIXES:
         result = _load_json(path)
     else:
-        result = _load_csv(path, use_polars=use_polars, sample_rows=sample_rows)
+        # Explicit options are a pandas feature set; the polars fast path honours only defaults.
+        # A large file opened with options is still capped at `sample_rows`, through pandas.
+        result = _load_csv(
+            path,
+            use_polars=use_polars and not options,
+            sample_rows=sample_rows,
+            options=options,
+            limit_rows=sample_rows if (options and use_polars) else None,
+        )
 
     if result.df.empty:
         raise LoadError(
@@ -173,7 +212,7 @@ def load(
 
     result.path = path
     result.size_bytes = size_bytes
-    result.file_hash = file_hash(path)
+    result.file_hash = known_hash or file_hash(path)
     if not result.total_rows:
         result.total_rows = len(result.df)
     return result
@@ -182,9 +221,33 @@ def load(
 # ---------------------------------------------------------------------------- readers
 
 
-def _load_csv(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResult:
-    """Read a delimited text file, sniffing the separator and retrying on encoding errors."""
-    delimiter = sniff_delimiter(path)
+def _load_csv(
+    path: Path,
+    *,
+    use_polars: bool,
+    sample_rows: int,
+    options: dict[str, Any] | None = None,
+    limit_rows: int | None = None,
+) -> LoadResult:
+    """Read a delimited text file, sniffing the separator and retrying on encoding errors.
+
+    Anything in ``options`` (from the import dialog) wins over detection: a chosen delimiter is
+    not sniffed, a chosen encoding is not retried, a chosen decimal mark switches off the
+    decimal-comma heuristic.
+    """
+    options = dict(options or {})
+    delimiter = str(options.get("sep") or sniff_delimiter(path))
+    encodings = (
+        (str(options["encoding"]),)
+        if options.get("encoding")
+        else (
+            "utf-8",
+            *_ENCODING_FALLBACKS,
+        )
+    )
+    extra: dict[str, Any] = {
+        key: options[key] for key in ("decimal", "thousands", "header") if key in options
+    }
 
     if use_polars:
         try:
@@ -224,9 +287,16 @@ def _load_csv(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResult:
 
     notes: list[str] = []
     last_error: Exception | None = None
-    for encoding in ("utf-8", *_ENCODING_FALLBACKS):
+    for encoding in encodings:
         try:
-            df = pd.read_csv(path, sep=delimiter, encoding=encoding, low_memory=False)
+            df = pd.read_csv(
+                path,
+                sep=delimiter,
+                encoding=encoding,
+                low_memory=False,
+                nrows=limit_rows,
+                **extra,
+            )
         except UnicodeDecodeError as exc:
             last_error = exc
             continue
@@ -237,9 +307,51 @@ def _load_csv(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResult:
                 f"{path.name} is malformed and could not be parsed.",
                 hint=f"Detected delimiter {delimiter!r}. Underlying error: {exc}",
             ) from exc
+        used: dict[str, Any] = dict(extra)
+        if delimiter != ",":
+            used["sep"] = delimiter
         if encoding != "utf-8":
-            notes.append(f"File is not UTF-8; read it as {encoding}.")
-        return LoadResult(df=df, path=path, engine="pandas", notes=notes)
+            if "encoding" not in options:
+                notes.append(f"File is not UTF-8; read it as {encoding}.")
+            used["encoding"] = encoding
+
+        locale_options = {} if "decimal" in extra else _decimal_comma_options(df, delimiter)
+        if locale_options.pop("_grouping_conflict", None):
+            notes.append(
+                "Some numbers use '.' as a thousands separator, but the file also has dotted "
+                "dates, so those numbers were left as text. Set the thousands separator in "
+                "File → Open with options if the dates can be sacrificed, or convert the column."
+            )
+        if locale_options:
+            try:
+                # The user's own options (header row, an explicit thousands mark) win.
+                reread: dict[str, Any] = {**locale_options, **extra}
+                df = pd.read_csv(
+                    path,
+                    sep=delimiter,
+                    encoding=encoding,
+                    low_memory=False,
+                    nrows=limit_rows,
+                    **reread,
+                )
+            except (pd.errors.ParserError, ValueError):
+                pass  # keep the first read; the numbers stay text, which is visible and fixable
+            else:
+                used.update(reread)
+                mark = "comma decimals" + (
+                    " and dot thousands separators" if "thousands" in locale_options else ""
+                )
+                notes.append(f"Numbers use {mark} (European format); read them as numbers.")
+
+        result = LoadResult(df=df, path=path, engine="pandas", notes=notes, read_options=used)
+        if limit_rows is not None and len(df) >= limit_rows:
+            result.total_rows = max(_count_lines(path) - 1, len(df))
+            result.sampled = result.total_rows > len(df)
+            notes.append(
+                f"Large file — loaded the first {len(df):,} of about {result.total_rows:,} rows. "
+                "Statistics and charts are computed on this sample."
+            )
+        return result
 
     raise LoadError(
         f"Could not decode {path.name} with any supported encoding.",
@@ -247,14 +359,72 @@ def _load_csv(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResult:
     )
 
 
+def _count_lines(path: Path, *, chunk_size: int = 1 << 20) -> int:
+    """Count newline-terminated lines without decoding the file."""
+    count = 0
+    with open(path, "rb") as handle:
+        while chunk := handle.read(chunk_size):
+            count += chunk.count(b"\n")
+    return count
+
+
+def _decimal_comma_options(df: pd.DataFrame, delimiter: str) -> dict[str, str]:
+    """Reader options for a file whose numbers use a comma as the decimal mark, or ``{}``.
+
+    A semicolon-delimited CSV from a German or French locale writes ``1,5`` and ``1.234,56``.
+    Read with the defaults, those columns arrive as text — and the date parser then claims them.
+    This looks for text columns that are overwhelmingly comma-decimal numbers. It refuses when
+    the file also contains dot-decimal floats, because one file cannot honour both conventions.
+    """
+    if delimiter not in _DECIMAL_COMMA_DELIMITERS:
+        return {}
+
+    candidates: list[pd.Series] = []
+    dotted_dates = False
+    for column in df.columns:
+        series = df[column]
+        if pd.api.types.is_float_dtype(series):
+            values = series.dropna()
+            if not values.empty and bool(((values % 1) != 0).any()):
+                return {}  # real dot decimals elsewhere: mixed conventions, leave it alone
+            continue
+        if not (pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)):
+            continue
+        sample = series.dropna().astype(str).head(1000)
+        if sample.empty:
+            continue
+        if float(sample.str.match(_COMMA_DECIMAL).mean()) >= 0.9:
+            candidates.append(sample)
+        elif float(sample.str.match(_DOTTED_DATE).mean()) >= 0.5:
+            dotted_dates = True
+
+    if not candidates:
+        return {}
+    # "1,250" / "12,000" with exactly three digits after every comma is US thousands grouping as
+    # often as it is a German decimal. Guessing wrong scales the column by 1000, so ambiguous
+    # columns are left as text — visible, and fixable in File → Open with options.
+    if all(bool(sample.str.match(_THREE_DECIMALS).all()) for sample in candidates):
+        return {}
+    options = {"decimal": ","}
+    # pandas strips the thousands mark anywhere in a field, so with dotted dates in the file
+    # ("01.05.2024") a "." thousands separator would turn every date into an integer.
+    grouped = any(bool(sample.str.contains(_DOT_GROUPING).any()) for sample in candidates)
+    if grouped and not dotted_dates:
+        options["thousands"] = "."
+    elif grouped:
+        options["_grouping_conflict"] = "1"
+    return options
+
+
 def _load_excel(path: Path, *, sheet: str | int | None) -> LoadResult:
     """Read one sheet of an Excel workbook, defaulting to the first."""
     try:
         book = pd.ExcelFile(path)
     except ImportError as exc:
+        package = "xlrd" if path.suffix.lower() == ".xls" else "openpyxl"
         raise LoadError(
-            "Reading Excel files needs the openpyxl package.",
-            hint="Install it with: pip install openpyxl",
+            f"Reading {path.suffix.lower()} files needs the {package} package.",
+            hint=f"Install it with: pip install {package}",
         ) from exc
     except Exception as exc:
         raise LoadError(f"Could not open {path.name}.", hint=str(exc)) from exc
@@ -272,7 +442,8 @@ def _load_excel(path: Path, *, sheet: str | int | None) -> LoadResult:
     if len(book.sheet_names) > 1:
         chosen = book.sheet_names[target] if isinstance(target, int) else target
         notes.append(f"Workbook has {len(book.sheet_names)} sheets; loaded {chosen!r}.")
-    return LoadResult(df=df, path=path, engine="pandas", notes=notes)
+    read_options = {"sheet_name": target} if target != 0 else {}
+    return LoadResult(df=df, path=path, engine="pandas", notes=notes, read_options=read_options)
 
 
 def _load_json(path: Path) -> LoadResult:
@@ -290,7 +461,10 @@ def _load_json(path: Path) -> LoadResult:
                     if isinstance(payload.get(key), list):
                         payload = payload[key]
                         break
-            df = pd.json_normalize(payload)
+            if _is_object_of_arrays(payload):
+                df = pd.DataFrame(payload)
+            else:
+                df = pd.json_normalize(payload)
     except ValueError as exc:
         raise LoadError(
             f"{path.name} is not valid JSON that maps onto a table.",
@@ -303,6 +477,20 @@ def _load_json(path: Path) -> LoadResult:
         raise LoadError(f"Could not read {path.name}.", hint=str(exc)) from exc
 
     return LoadResult(df=df, path=path, engine="pandas")
+
+
+def _is_object_of_arrays(payload: Any) -> bool:
+    """Whether ``payload`` is ``{"col": [...], ...}`` with equal-length, non-empty columns.
+
+    ``json_normalize`` turns that shape into a single row of lists, so it is built directly.
+    """
+    if not isinstance(payload, dict) or not payload:
+        return False
+    values = list(payload.values())
+    if not all(isinstance(v, list) for v in values):
+        return False
+    lengths = {len(v) for v in values}
+    return len(lengths) == 1 and lengths != {0}
 
 
 def _load_parquet(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResult:
@@ -343,16 +531,27 @@ def _load_parquet(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResu
     return LoadResult(df=df, path=path, engine="pandas")
 
 
-def read_code_for(path: str | Path) -> str:
+def read_code_for(path: str | Path, options: dict[str, Any] | None = None) -> str:
     """Return the pandas one-liner that reads ``path``, for the generated script.
 
     Keeping this next to the readers means generated code stays in step with how PlotaViz
     actually loads a file instead of drifting from it.
+
+    Args:
+        path: The dataset.
+        options: :attr:`LoadResult.read_options` from the actual load. When given, the delimiter,
+            encoding, and number format are replayed exactly instead of re-sniffed.
     """
     path = Path(path)
     suffix = path.suffix.lower()
     literal = repr(str(path))
+    if options and suffix in CSV_SUFFIXES:
+        keys = ("sep", "encoding", "decimal", "thousands", "header")
+        extra = "".join(f", {k}={options[k]!r}" for k in keys if k in options)
+        return f"pd.read_csv({literal}{extra})"
     if suffix in EXCEL_SUFFIXES:
+        if options and "sheet_name" in options:
+            return f"pd.read_excel({literal}, sheet_name={options['sheet_name']!r})"
         return f"pd.read_excel({literal})"
     if suffix in PARQUET_SUFFIXES:
         return f"pd.read_parquet({literal})"

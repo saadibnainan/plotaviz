@@ -38,10 +38,14 @@ class Session:
     Attributes:
         source_path: Dataset the session was built from.
         source_hash: SHA-256 of that file at save time.
+        load_options: Import settings the user chose (delimiter, encoding, decimal mark, sheet),
+            replayed on restore. Empty means "detect", as for a normal open.
         type_overrides: ``{column: role}`` corrections the user made.
         pipeline: The preprocessing steps, including filters.
         spec: The chart that was on screen.
         view: View settings — window geometry, active panel, renderer choice.
+        dashboard: Charts pinned to the dashboard, in tile order. Optional on disk, so files
+            written before dashboards existed still load.
         app_version: PlotaViz version that wrote the file.
         saved_at: ISO-8601 UTC timestamp.
         version: Session schema version.
@@ -49,13 +53,18 @@ class Session:
 
     source_path: str
     source_hash: str = ""
+    load_options: dict[str, Any] = field(default_factory=dict)
     type_overrides: dict[str, str] = field(default_factory=dict)
     pipeline: Pipeline = field(default_factory=Pipeline)
     spec: ChartSpec | None = None
     view: dict[str, Any] = field(default_factory=dict)
+    dashboard: list[ChartSpec] = field(default_factory=list)
     app_version: str = "0.1.0"
     saved_at: str = ""
     version: int = SESSION_VERSION
+    #: Hash of the source as found by the last :meth:`check_source`, so the loader can reuse it
+    #: instead of reading a multi-gigabyte file a second time. Never written to disk.
+    current_hash: str = field(default="", repr=False, compare=False)
 
     # ------------------------------------------------------------------ writing
 
@@ -65,11 +74,16 @@ class Session:
             "version": self.version,
             "app_version": self.app_version,
             "saved_at": self.saved_at or datetime.now(UTC).isoformat(timespec="seconds"),
-            "source": {"path": str(self.source_path), "sha256": self.source_hash},
+            "source": {
+                "path": str(self.source_path),
+                "sha256": self.source_hash,
+                "options": dict(self.load_options),
+            },
             "type_overrides": dict(self.type_overrides),
             "pipeline": self.pipeline.to_list(),
             "chart": self.spec.to_dict() if self.spec else None,
             "view": dict(self.view),
+            "dashboard": [tile.to_dict() for tile in self.dashboard],
         }
 
     def save(self, path: str | Path) -> Path:
@@ -138,10 +152,16 @@ class Session:
         return cls(
             source_path=str(source.get("path", "")),
             source_hash=str(source.get("sha256", "")),
+            load_options=dict(source.get("options") or {}),
             type_overrides=dict(payload.get("type_overrides") or {}),
             pipeline=pipeline,
             spec=ChartSpec.from_dict(chart) if chart else None,
             view=dict(payload.get("view") or {}),
+            dashboard=[
+                ChartSpec.from_dict(tile)
+                for tile in payload.get("dashboard") or []
+                if isinstance(tile, dict)
+            ],
             app_version=str(payload.get("app_version", "")),
             saved_at=str(payload.get("saved_at", "")),
             version=version,
@@ -165,7 +185,9 @@ class Session:
                 f"The source file {source} is missing. Open the dataset again to restore this "
                 "session."
             )
-        if self.source_hash and file_hash(source) != self.source_hash:
+        if self.source_hash:
+            self.current_hash = file_hash(source)
+        if self.source_hash and self.current_hash != self.source_hash:
             saved = self.saved_at or "the time it was saved"
             return (
                 f"{source.name} has changed since {saved}. The cleaning steps and chart will be "

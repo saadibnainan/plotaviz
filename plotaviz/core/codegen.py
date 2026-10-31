@@ -13,10 +13,19 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .errors import ExportError
 from .loader import read_code_for
-from .plotter import effective_spec, group_keys
+from .plotter import (
+    MAX_CATEGORIES,
+    OTHER_LABEL,
+    PAIR_PLOT_MAX_COLUMNS,
+    effective_spec,
+    group_keys,
+    palette_for,
+    primary_color,
+)
 from .preprocess import Pipeline
 from .spec import MATRIX_CHARTS, ChartSpec
 
@@ -48,6 +57,7 @@ def generate(
     flavour: str = "matplotlib",
     version: str = "0.1.0",
     output_image: str | None = None,
+    read_options: dict[str, Any] | None = None,
 ) -> str:
     """Emit a runnable script reproducing ``spec``.
 
@@ -58,6 +68,8 @@ def generate(
         flavour: ``"matplotlib"`` for static output or ``"plotly"`` for an interactive figure.
         version: PlotaViz version, recorded in the header.
         output_image: Default ``--save`` path baked into the script.
+        read_options: How the file was actually read (delimiter, encoding, number format), from
+            :attr:`~plotaviz.core.loader.LoadResult.read_options`.
 
     Returns:
         The complete script as a string.
@@ -77,7 +89,7 @@ def generate(
 
     lines: list[str] = [
         _HEADER.format(
-            title=spec.display_title(),
+            title=_docstring_safe(spec.display_title()),
             version=version,
             timestamp=datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
             filename=filename,
@@ -101,7 +113,7 @@ def generate(
         "",
         "def load():",
         '    """Read the source dataset."""',
-        f"    return {read_code_for(source_path)}",
+        f"    return {read_code_for(source_path, read_options)}",
         "",
         "",
         "def preprocess(df):",
@@ -115,6 +127,8 @@ def generate(
         lines.append("    # No cleaning steps were applied.")
     lines += ["    return df", "", ""]
 
+    if spec.chart not in MATRIX_CHARTS and (spec.x or spec.color):
+        lines += _CAP_HELPER
     lines += _chart_function(spec, flavour)
 
     lines += [
@@ -154,6 +168,114 @@ def generate(
     return "\n".join(lines) + "\n"
 
 
+def generate_dashboard(
+    specs: list[ChartSpec],
+    pipeline: Pipeline,
+    source_path: str | Path,
+    *,
+    flavour: str = "matplotlib",
+    version: str = "0.1.0",
+    read_options: dict[str, Any] | None = None,
+) -> str:
+    """Emit one standalone script that reproduces every dashboard tile.
+
+    The data is loaded and cleaned once; each tile gets its own ``build_chart_<n>`` function, so
+    the script reads like the single-chart one. ``--save-dir`` writes ``chart_1.png``,
+    ``chart_2.png``… (``.html`` for the Plotly flavour).
+
+    Raises:
+        ExportError: If ``flavour`` is unknown or ``specs`` is empty.
+    """
+    if flavour not in FLAVOURS:
+        raise ExportError(
+            f"Unknown code flavour {flavour!r}.", hint=f"Choose one of: {', '.join(FLAVOURS)}."
+        )
+    if not specs:
+        raise ExportError("The dashboard has no charts.", hint="Pin a chart first.")
+    for spec in specs:
+        spec.validate()
+
+    titles = "; ".join(spec.display_title() for spec in specs)
+    lines: list[str] = [
+        _HEADER.format(
+            title=_docstring_safe(f"Dashboard of {len(specs)} charts: {titles}"),
+            version=version,
+            timestamp=datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
+            filename="dashboard.py",
+            requirements="pandas, numpy, "
+            + ("matplotlib" if flavour == "matplotlib" else "plotly"),
+        ),
+        "from pathlib import Path",
+        "",
+        "import numpy as np",
+        "import pandas as pd",
+    ]
+    if flavour == "matplotlib":
+        lines.append("import matplotlib.pyplot as plt")
+    else:
+        lines += ["import plotly.express as px", "import plotly.graph_objects as go"]
+
+    lines += [
+        "",
+        "",
+        "def load():",
+        '    """Read the source dataset."""',
+        f"    return {read_code_for(Path(source_path), read_options)}",
+        "",
+        "",
+        "def preprocess(df):",
+        '    """Replay the exact cleaning steps PlotaViz applied."""',
+    ]
+    step_code = pipeline.to_code()
+    lines += [f"    {line}" if line else "" for line in step_code] or [
+        "    # No cleaning steps were applied."
+    ]
+    lines += ["    return df", "", ""]
+    if any(spec.chart not in MATRIX_CHARTS and (spec.x or spec.color) for spec in specs):
+        lines += _CAP_HELPER
+
+    for number, spec in enumerate(specs, start=1):
+        chart = _chart_function(spec, flavour)
+        chart[0] = f"def build_chart_{number}(df):"
+        lines += [*chart, "", ""]
+
+    names = ", ".join(f"build_chart_{n}" for n in range(1, len(specs) + 1))
+    suffix = "png" if flavour == "matplotlib" else "html"
+    lines += [
+        f"CHARTS = [{names}]",
+        "",
+        "",
+        'if __name__ == "__main__":',
+        "    parser = argparse.ArgumentParser(description=__doc__)",
+        "    parser.add_argument('--save-dir', default=None, "
+        f"help='write chart_1.{suffix}, chart_2.{suffix}, ... into this folder')",
+        "    parser.add_argument('--no-show', action='store_true', help='do not open windows')",
+        "    args = parser.parse_args()",
+        "",
+        "    df = preprocess(load())",
+        "    for number, build in enumerate(CHARTS, start=1):",
+        "        fig = build(df)",
+        "        if args.save_dir:",
+        "            Path(args.save_dir).mkdir(parents=True, exist_ok=True)",
+        f"            target = Path(args.save_dir) / f'chart_{{number}}.{suffix}'",
+    ]
+    if flavour == "matplotlib":
+        lines += [
+            "            fig.savefig(target, dpi=200, bbox_inches='tight')",
+            "            print(f'Saved {target}')",
+            "    if not args.no_show:",
+            "        plt.show()",
+        ]
+    else:
+        lines += [
+            "            fig.write_html(target)",
+            "            print(f'Saved {target}')",
+            "        if not args.no_show:",
+            "            fig.show()",
+        ]
+    return "\n".join(lines) + "\n"
+
+
 def _chart_function(spec: ChartSpec, flavour: str) -> list[str]:
     """Emit the ``build_chart`` function body for one spec and flavour.
 
@@ -169,22 +291,125 @@ def _chart_function(spec: ChartSpec, flavour: str) -> list[str]:
     lines += [f"    {line}" for line in _prepare_lines(spec, eff)]
     lines.append("")
     body = _plotly_body(eff) if flavour == "plotly" else _matplotlib_body(eff)
+    body = _customize(body, eff, flavour)
     lines += [f"    {line}" if line else "" for line in body]
     return lines
+
+
+def _customize(body: list[str], spec: ChartSpec, flavour: str) -> list[str]:
+    """Apply the spec's customization options to an emitted chart body.
+
+    Mirrors what the renderers do with ``palette``, ``x_label``/``y_label``, and ``bins``, so a
+    chart customized in the app looks the same when its script is run.
+    """
+    opts = spec.options
+    palette = palette_for(spec)
+    bins = opts.get("bins")
+    out: list[str] = []
+    if palette:
+        out.append(f"PALETTE = {palette!r}")
+
+    for line in body:
+        if flavour == "plotly":
+            px_call = line.startswith("fig = px.") and "imshow" not in line
+            if palette and px_call and "scatter_matrix" not in line:
+                line = line.replace(", title=", ", color_discrete_sequence=PALETTE, title=", 1)
+            if palette and spec.chart == "heatmap" and line.startswith("fig = px.imshow"):
+                line = line.replace(
+                    "aspect='auto',", "aspect='auto', color_continuous_scale='cividis',"
+                )
+            if palette and "mode='lines'))" in line:
+                line = line.replace("mode='lines'))", "mode='lines', line={'color': PALETTE[0]}))")
+            if bins and line.startswith("fig = px.histogram"):
+                line = line.replace(", title=", f", nbins={int(bins)}, title=", 1)
+            if line == "fig.update_layout(template='plotly_white')":
+                if opts.get("x_label"):
+                    out.append(f"fig.update_xaxes(title_text={str(opts['x_label'])!r})")
+                if opts.get("y_label"):
+                    out.append(f"fig.update_yaxes(title_text={str(opts['y_label'])!r})")
+        else:
+            line = line.replace("'#4C78A8'", repr(primary_color(spec)))
+            if bins:
+                line = line.replace("bins='auto'", f"bins={int(bins)}")
+            if palette:
+                line = line.replace("ax=ax, width=0.8)", "ax=ax, width=0.8, color=PALETTE)")
+                line = line.replace("autopct='%1.1f%%')", "autopct='%1.1f%%', colors=PALETTE)")
+                line = line.replace("cmap='viridis'", "cmap='cividis'")
+            if line == "fig.tight_layout()":
+                if opts.get("x_label"):
+                    out.append(f"ax.set_xlabel({str(opts['x_label'])!r})")
+                if opts.get("y_label"):
+                    out.append(f"ax.set_ylabel({str(opts['y_label'])!r})")
+        out.append(line)
+        if flavour != "plotly" and palette and line.startswith("fig, ax = plt.subplots("):
+            out.append("ax.set_prop_cycle(color=PALETTE)")
+    return out
+
+
+_CAP_HELPER = [
+    "def cap_categories(frame, column, limit, measure=None, agg=None):",
+    f'    """Keep the `limit` largest categories; group the rest as {OTHER_LABEL!r}, as PlotaViz',
+    '    does on screen. Numeric and date columns are left alone."""',
+    "    values = frame[column]",
+    "    types = pd.api.types",
+    "    if types.is_numeric_dtype(values) or types.is_datetime64_any_dtype(values):",
+    "        return frame",
+    "    if values.nunique() <= limit:",
+    "        return frame",
+    "    usable = measure in frame.columns and types.is_numeric_dtype(frame[measure])",
+    "    if usable and agg != 'count':",
+    "        grouped = frame.groupby(column, observed=True)[measure]",
+    "        ranking = grouped.agg(agg or 'sum').nlargest(limit)",
+    "    else:",
+    "        ranking = values.value_counts().nlargest(limit)",
+    "    frame = frame.copy()",
+    f"    frame[column] = values.astype(object).where(values.isin(ranking.index), {OTHER_LABEL!r})",
+    "    return frame",
+    "",
+    "",
+]
+
+
+def _docstring_safe(text: str) -> str:
+    """Escape text for the inside of a triple-quoted docstring.
+
+    A title is user- or model-supplied; a stray backslash or triple quote in it would otherwise
+    end the docstring early or form an invalid escape, and the script would not compile.
+    """
+    return text.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
 
 
 def _prepare_lines(spec: ChartSpec, eff: ChartSpec) -> list[str]:
     """Emit the aggregation/sorting the plotter would have done, so the script matches the app."""
     lines: list[str] = []
     if spec.chart in MATRIX_CHARTS:
-        lines.append("plot_df = df.select_dtypes('number')")
-        lines.append(
-            "plot_df = plot_df[[c for c in plot_df.columns if not str(c).endswith('__outlier')]]"
-        )
+        pinned = spec.options.get("columns")
+        if isinstance(pinned, list) and pinned:
+            lines.append(f"plot_df = df[[c for c in {pinned!r} if c in df.columns]]")
+            lines.append("plot_df = plot_df.select_dtypes('number')")
+        else:
+            lines.append("plot_df = df.select_dtypes('number')")
+            lines.append(
+                "plot_df = plot_df[[c for c in plot_df.columns "
+                "if not str(c).endswith('__outlier')]]"
+            )
         return lines
 
     used = list(spec.columns_used)
-    lines.append(f"plot_df = df[{used!r}].dropna()")
+    # Like the app, only rows missing the plotted x/y go; a missing colour value stays a group.
+    required = [c for c in (spec.x, spec.y) if c]
+    lines.append(f"plot_df = df[{used!r}].dropna(subset={required!r})")
+
+    cap = int(spec.options.get("top_n") or MAX_CATEGORIES)
+    if spec.x:
+        lines.append(
+            f"plot_df = cap_categories(plot_df, {spec.x!r}, {cap}, {spec.y!r}, {spec.agg!r})"
+        )
+    if spec.color:
+        lines.append(
+            f"plot_df = cap_categories(plot_df, {spec.color!r}, {min(cap, 12)}, {spec.y!r}, "
+            f"{spec.agg!r})"
+        )
 
     if spec.agg:
         keys = group_keys(spec.x, spec.color)
@@ -197,23 +422,20 @@ def _prepare_lines(spec: ChartSpec, eff: ChartSpec) -> list[str]:
 
         if spec.agg == "count" or not source_measure:
             lines.append(
-                f"plot_df = plot_df.groupby({keys!r}, observed=True).size()"
+                f"plot_df = plot_df.groupby({keys!r}, observed=True, dropna=False).size()"
                 f".reset_index(name={measure!r})"
             )
         else:
             lines.append(
-                f"plot_df = plot_df.groupby({keys!r}, observed=True)[{source_measure!r}]"
-                f".agg({spec.agg!r}).reset_index()"
+                f"plot_df = plot_df.groupby({keys!r}, observed=True, dropna=False)"
+                f"[{source_measure!r}].agg({spec.agg!r}).reset_index()"
             )
 
     if spec.chart in {"line", "area"} and eff.x:
         lines.append(f"plot_df = plot_df.sort_values({eff.x!r})")
     elif spec.chart in {"bar", "treemap", "pie"} and eff.y:
-        lines.append(f"plot_df = plot_df.sort_values({eff.y!r}, ascending=False)")
-
-    top_n = spec.options.get("top_n")
-    if top_n and spec.chart in {"bar", "treemap", "pie"}:
-        lines.append(f"plot_df = plot_df.head({int(top_n)})")
+        ascending = bool(spec.options.get("sort_ascending", False))
+        lines.append(f"plot_df = plot_df.sort_values({eff.y!r}, ascending={ascending!r})")
 
     return lines
 
@@ -282,7 +504,7 @@ def _plotly_body(spec: ChartSpec) -> list[str]:
     elif chart == "pair_plot":
         lines += [
             "fig = px.scatter_matrix(plot_df, "
-            f"dimensions=list(plot_df.columns)[:6], title={title!r})",
+            f"dimensions=list(plot_df.columns)[:{PAIR_PLOT_MAX_COLUMNS}], title={title!r})",
             "fig.update_traces(diagonal_visible=False, showupperhalf=False)",
         ]
 
@@ -305,7 +527,7 @@ def _matplotlib_body(spec: ChartSpec) -> list[str]:
 
     if chart == "pair_plot":
         return [
-            "cols = list(plot_df.columns)[:5]",
+            f"cols = list(plot_df.columns)[:{PAIR_PLOT_MAX_COLUMNS}]",
             "fig, axes = plt.subplots(len(cols), len(cols), figsize=(10, 8), squeeze=False)",
             "for i, row_col in enumerate(cols):",
             "    for j, col_col in enumerate(cols):",

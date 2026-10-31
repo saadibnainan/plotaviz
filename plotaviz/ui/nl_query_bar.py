@@ -1,4 +1,7 @@
-"""The natural-language query bar.
+"""The natural-language query bar and the chart builder row beneath it.
+
+The builder row — chart type, x, y, colour, aggregation — always shows the chart on screen and
+is editable with or without an LLM provider, so PlotaViz works as a manual chart builder offline.
 
 Type "revenue by region over time", get a chart. The important design decision is what happens
 in between: the model returns a **chart spec**, PlotaViz validates it against the real schema,
@@ -88,7 +91,7 @@ class NLQueryBar(QWidget):
         interp_layout = QHBoxLayout(self.interpretation)
         interp_layout.setContentsMargins(8, 4, 8, 4)
 
-        caption = QLabel("Interpreted as", self.interpretation)
+        caption = QLabel("Chart", self.interpretation)
         caption.setStyleSheet("color: palette(mid); font-size: 11px;")
         interp_layout.addWidget(caption)
 
@@ -126,12 +129,17 @@ class NLQueryBar(QWidget):
     def set_columns(self, columns: list[str]) -> None:
         """Populate the column dropdowns for the current dataset."""
         self._columns = list(columns)
+        self.interpretation.setVisible(bool(self._columns))
         self._updating = True
         for combo in (self.x_combo, self.y_combo, self.color_combo):
             combo.clear()
             combo.addItem("none")
             combo.addItems(self._columns)
         self._updating = False
+        # Refilling the combos resets them to "none"; put the current spec back so the row keeps
+        # describing the chart on screen after a filter or type change.
+        if self._spec is not None:
+            self.show_spec(self._spec, announce=False)
 
     def set_enabled_for_provider(self, configured: bool, provider_name: str = "") -> None:
         """Enable or disable the bar depending on whether an LLM provider is set up.
@@ -169,8 +177,14 @@ class NLQueryBar(QWidget):
         )
         self.status.show()
 
-    def show_spec(self, spec: ChartSpec) -> None:
-        """Display the interpreted spec so the mapping is visible and editable."""
+    def show_spec(self, spec: ChartSpec, *, announce: bool = True) -> None:
+        """Display a spec in the builder row so the mapping is visible and editable.
+
+        Args:
+            spec: The chart on screen.
+            announce: Also show its reasoning under the input — for an answer to a question,
+                not for every redraw.
+        """
         self._spec = spec
         self._updating = True
 
@@ -182,7 +196,7 @@ class NLQueryBar(QWidget):
 
         self._updating = False
         self.interpretation.show()
-        if spec.why:
+        if announce and spec.why:
             self.show_status(spec.why)
 
     def hide_interpretation(self) -> None:

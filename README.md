@@ -127,13 +127,21 @@ plotaviz                                  # open the app
 plotaviz samples/sales_timeseries.csv     # open the app with a file
 ```
 
-1. Drag a dataset in, or use **File → Open**.
-2. Read the **cleaning report** — what was renamed, filled, deduplicated, flagged.
+1. Drag a dataset in, or use **File → Open**. For a semicolon file, a non-UTF-8 export, a title
+   row above the header, or a specific Excel sheet, use **File → Open with options…**.
+2. Read the **cleaning report** — what was renamed, deduplicated, flagged. Change how rows are
+   cleaned in the **Cleaning** tab; missing values are left alone unless you choose otherwise.
 3. Check the **Types** tab and correct anything inference got wrong.
-4. Pick a chart from **Charts**. The reasoning for each is right there.
+4. Pick a chart from **Charts** — the reasoning for each is right there — or build one in the
+   chart row above it (works offline). Adjust title, labels, scales, and colours under
+   **Customize**.
 5. Narrow the data in **Filters** — per-column widgets, or a raw pandas query.
-6. **File → Export** for the image, the interactive HTML, or the Python script.
-7. **File → Save session** writes a `.pviz` file that restores all of it later.
+   **Edit → Undo** reverts any filter, type, or cleaning change.
+6. Several charts worth keeping? **Pin to dashboard** (Ctrl+D) and look at them together on
+   the **Dashboard** tab.
+7. **File → Export** for the image, the interactive HTML, or the Python script — of the chart,
+   or of the whole dashboard.
+8. **File → Save session** writes a `.pviz` file that restores all of it later.
 
 ### Command line
 
@@ -225,8 +233,10 @@ Both return a **structured chart spec (JSON), never executable code.** The spec 
 against your real column names before anything renders; a hallucinated column is a clear error
 message, not a crash.
 
-**What gets sent:** column names, summary statistics, and up to 5 sample rows. Never the dataset.
-You are asked for consent before the first remote request.
+**What gets sent:** column names, summary statistics, and up to five example and most-frequent
+values per column — withheld entirely for identifier and free-text columns, which is where names
+and e-mail addresses live. Never the dataset. Nothing goes to a remote provider until you tick
+that provider's consent box in Settings; consent is per provider.
 
 **Where keys live:** your OS keychain, via `keyring`. Never a config file, never a session file,
 never the repo. Keys are redacted from logs and error messages.
@@ -239,8 +249,9 @@ ollama pull llama3.1
 ollama serve
 ```
 
-In **Settings → LLM provider**, choose **Ollama**. No API key, no network, no consent prompt —
-this is the right choice for sensitive data.
+In **Settings → LLM provider**, choose **Ollama**. With the default `localhost` host there is no
+API key, no network, and no consent prompt — this is the right choice for sensitive data. Point
+it at another machine and it is treated like any remote provider: consent is required.
 
 Hosted providers: Anthropic (Claude), OpenAI, and Google Gemini. Install with
 `pip install -e ".[llm]"`, then paste a key in Settings.
@@ -249,18 +260,25 @@ Hosted providers: Anthropic (Claude), OpenAI, and Google Gemini. Install with
 
 ## Features
 
-- **Loading** — CSV, TSV, Excel, JSON, NDJSON, Parquet. Delimiter and encoding sniffing. Files
-  over a configurable threshold read through polars and profile on a sample.
+- **Loading** — CSV, TSV, Excel, JSON, NDJSON, Parquet. Delimiter, encoding, and European
+  decimal-comma detection, with manual import options (delimiter, encoding, decimal/thousands
+  marks, header line, Excel sheet). Files over a configurable threshold read through polars and
+  profile on a sample.
 - **Cleaning** — an ordered, replayable step list: name normalization, type coercion,
   missing-value strategies, IQR/z-score outlier flagging (non-destructive by default),
-  deduplication. Every step reports what it changed.
+  deduplication. Every step reports what it changed; settings and individual steps are editable
+  in the Cleaning tab, and every change can be undone.
 - **Type override** — inferred roles shown and editable before analysis proceeds.
 - **Filters** — range widgets, multi-selects, date ranges, and a raw pandas-query bar. Filters are
   pipeline steps, so they serialize into sessions and generated code for free.
 - **Charts** — 15 types, interactive via Plotly in a WebEngine view, with a matplotlib canvas
   fallback when WebEngine is unavailable.
-- **Export** — PNG, SVG, PDF, JPEG, WebP at up to 1200 DPI; self-contained interactive HTML; or a
-  standalone Python script in matplotlib or Plotly flavour.
+- **Dashboard** — pin several charts (Ctrl+D) to see a dataset's trend, breakdown, and
+  distribution side by side. Tiles redraw from the current filters and cleaning, are saved in the
+  session, and export together as one PNG/SVG/PDF grid, one offline HTML page, or one script.
+  Headless: `plotaviz --input data.csv --dashboard 4 --export overview.pdf`.
+- **Export** — PNG, SVG, PDF, JPEG, WebP at up to 1200 DPI; self-contained interactive HTML
+  (plotly.js embedded, works offline); or a standalone Python script in matplotlib or Plotly flavour.
 - **Sessions** — `.pviz` files store the recipe, not the data, and warn if the source changed.
 - **Guardrails** — automatic downsampling with a visible notice, top-N category capping,
   virtualized preview, debounced re-render.
@@ -341,9 +359,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for adding selector rules and LLM provide
 
 ## Roadmap
 
-Designed for, not built yet: auto EDA report export (HTML/PDF), a multi-chart dashboard grid, a
-chart customization panel (titles, palettes, axis scales), undo/redo across the step stack,
-colorblind-safe palettes and OS-following dark mode, and joining two datasets on a key.
+Designed for, not built yet: auto EDA report export (HTML/PDF),
+OS-following dark mode, and joining two datasets on a key. The full list of open items, with
+reasoning, is in [docs/AUDIT.md](docs/AUDIT.md).
 
 Explicitly out of scope for v1: plugin architecture, localization, real-time streaming, and live
 database connectors.

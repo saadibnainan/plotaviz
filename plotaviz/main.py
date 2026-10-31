@@ -68,13 +68,20 @@ def build_parser() -> argparse.ArgumentParser:
     chart.add_argument("--y", help="column for the y axis")
     chart.add_argument("--color", help="column to split series by")
     chart.add_argument("--agg", help="aggregation: sum, mean, median, min, max, count, nunique")
+    chart.add_argument(
+        "--dashboard",
+        type=int,
+        metavar="N",
+        help="pin the top N recommendations and export them together "
+        "(--export: one grid image/PDF or HTML page; --export-code: one script)",
+    )
 
     cleaning = parser.add_argument_group("cleaning")
     cleaning.add_argument(
         "--missing",
-        default="median",
-        choices=("drop", "mean", "median", "mode", "ffill", "bfill", "zero"),
-        help="missing-value strategy (default: median)",
+        default="keep",
+        choices=("keep", "drop", "mean", "median", "mode", "ffill", "bfill", "zero"),
+        help="missing-value handling (default: keep — gaps are left as gaps, not invented)",
     )
     cleaning.add_argument(
         "--no-outlier-flags", action="store_true", help="skip adding outlier flag columns"
@@ -119,9 +126,24 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
-    headless = bool(args.input or args.describe or args.recommend)
+    # Any output or chart-selection flag means "run headless" — including with the positional
+    # file. `plotaviz data.csv --export out.png` used to open the window and ignore --export.
+    headless = bool(
+        args.input
+        or args.describe
+        or args.recommend
+        or args.export
+        or args.export_code
+        or args.auto
+        or args.chart
+        or args.x
+        or args.y
+        or args.dashboard
+    )
     if not headless:
         return _run_gui(args.file)
+    if not 1 <= args.dpi <= 1200:
+        parser.error(f"--dpi must be between 1 and 1200 (got {args.dpi})")
     return _run_cli(args, parser)
 
 
@@ -154,7 +176,7 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 
     source = args.input or args.file
     if not source:
-        parser.error("--describe and --recommend need --input")
+        parser.error("headless mode needs a dataset: pass it as --input or as the first argument")
         return 2
 
     try:
@@ -177,6 +199,9 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         if args.recommend:
             _print_recommendations(analysis, as_json=args.json)
             return 0
+
+        if args.dashboard:
+            return _run_dashboard(analysis, args, parser)
 
         # --- choose a chart
         if args.chart:
@@ -254,14 +279,62 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         return 1
 
 
+def _run_dashboard(
+    analysis: object, args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    """Pin the top N recommendations and write them as one dashboard."""
+    from .core.analysis import MAX_TILES, Analysis
+    from .core.exporter import ExportOptions, export_dashboard_html, export_dashboard_image
+
+    assert isinstance(analysis, Analysis)
+    if not 1 <= args.dashboard <= MAX_TILES:
+        parser.error(f"--dashboard must be between 1 and {MAX_TILES} (got {args.dashboard})")
+    if not (args.export or args.export_code):
+        parser.error("--dashboard needs --export and/or --export-code")
+    for spec in analysis.recommendations[: args.dashboard]:
+        analysis.pin(spec)
+    if not analysis.dashboard:
+        print("error: there are no recommendations to put on a dashboard.", file=sys.stderr)
+        return 1
+    if not args.quiet:
+        for number, spec in enumerate(analysis.dashboard, start=1):
+            print(f"Tile {number}: {spec.chart}  x={spec.x}  y={spec.y}", file=sys.stderr)
+
+    if args.export:
+        target = Path(args.export)
+        if target.suffix.lower() == ".html":
+            written = export_dashboard_html(analysis.df, analysis.dashboard, target)
+        else:
+            width, height = _parse_size(args.size, parser) if args.size != "10x6" else (6.0, 4.0)
+            written = export_dashboard_image(
+                analysis.df,
+                analysis.dashboard,
+                target,
+                options=ExportOptions(dpi=args.dpi, width=width, height=height),
+            )
+        print(written)
+    if args.export_code:
+        from .core import codegen
+
+        print(
+            codegen.write(
+                args.export_code, analysis.generate_dashboard_code(flavour=args.code_flavour)
+            )
+        )
+    return 0
+
+
 def _parse_size(text: str, parser: argparse.ArgumentParser) -> tuple[float, float]:
     """Parse a ``WIDTHxHEIGHT`` size string into inches."""
     try:
-        width, _, height = text.lower().partition("x")
-        return float(width), float(height)
+        width_text, _, height_text = text.lower().partition("x")
+        width, height = float(width_text), float(height_text)
     except ValueError:
         parser.error(f"--size expects WIDTHxHEIGHT in inches, e.g. 10x6 (got {text!r})")
         raise  # unreachable; parser.error exits
+    if not (0 < width <= 100 and 0 < height <= 100):
+        parser.error(f"--size values must be between 0 and 100 inches (got {text!r})")
+    return width, height
 
 
 def _print_profile(analysis: object, *, as_json: bool) -> None:

@@ -30,12 +30,14 @@ class Worker(QObject):
     Signals:
         finished: Emitted with the return value on success.
         failed: Emitted with a user-facing message and the traceback on failure.
+        aborted: Emitted instead of ``finished`` when the user cancelled; the result is dropped.
         progress: Emitted with ``(percent, message)``.
-        done: Emitted after either outcome, for teardown.
+        done: Emitted after any outcome, for teardown.
     """
 
     finished = Signal(object)
     failed = Signal(str, str)
+    aborted = Signal()
     progress = Signal(int, str)
     done = Signal()
 
@@ -77,7 +79,11 @@ class Worker(QObject):
                 traceback.format_exc(),
             )
         else:
-            if not self._cancelled:
+            # Every run ends in exactly one of finished / failed / cancelled. Emitting nothing on
+            # cancel left the caller's progress bar, Cancel button, and busy state up forever.
+            if self._cancelled:
+                self.aborted.emit()
+            else:
                 self.finished.emit(result)
         finally:
             self.done.emit()
@@ -106,12 +112,17 @@ class TaskRunner(QObject):
     Signals:
         finished: Emitted on the UI thread with the task's return value.
         failed: Emitted on the UI thread with ``(message, traceback)``.
+        cancelled: Emitted on the UI thread when a cancelled task has wound down.
         progress: Emitted on the UI thread with ``(percent, message)``.
+        idle: Emitted on the UI thread once the thread has stopped; start queued work here.
     """
 
     finished = Signal(object)
     failed = Signal(str, str)
+    cancelled = Signal()
     progress = Signal(int, str)
+    #: Emitted once the thread has fully stopped and a new task can start.
+    idle = Signal()
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -119,6 +130,7 @@ class TaskRunner(QObject):
         self._worker: Worker | None = None
         self._on_finished: Callable[[Any], None] | None = None
         self._on_failed: Callable[[str, str], None] | None = None
+        self._on_cancelled: Callable[[], None] | None = None
         self._on_progress: Callable[[int, str], None] | None = None
 
     @property
@@ -133,6 +145,7 @@ class TaskRunner(QObject):
         on_finished: Callable[[Any], None] | None = None,
         on_failed: Callable[[str, str], None] | None = None,
         on_progress: Callable[[int, str], None] | None = None,
+        on_cancelled: Callable[[], None] | None = None,
         **kwargs: Any,
     ) -> Worker:
         """Run ``fn`` on a background thread.
@@ -143,6 +156,7 @@ class TaskRunner(QObject):
             on_finished: Called with the result on the UI thread.
             on_failed: Called with ``(message, traceback)`` on the UI thread.
             on_progress: Called with ``(percent, message)`` on the UI thread.
+            on_cancelled: Called on the UI thread when a cancelled task has finished running.
             **kwargs: Keyword arguments for ``fn``.
 
         Returns:
@@ -166,12 +180,18 @@ class TaskRunner(QObject):
         self._on_finished = on_finished
         self._on_failed = on_failed
         self._on_progress = on_progress
+        self._on_cancelled = on_cancelled
         worker.finished.connect(self._relay_finished)
         worker.failed.connect(self._relay_failed)
+        worker.aborted.connect(self._relay_cancelled)
         worker.progress.connect(self._relay_progress)
 
         worker.done.connect(thread.quit)
-        worker.done.connect(worker.deleteLater)
+        # The worker is NOT deleteLater()'d on its own thread. Its Python wrapper would then be
+        # destroyed there, taking the GIL while the UI thread may be inside a Qt call that has
+        # released the GIL and needs it back for a Python slot — an intermittent deadlock seen
+        # in testing. Instead the UI thread drops its reference in _clear(), after the thread has
+        # stopped, which is when Qt allows deleting an object of a finished thread.
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._clear)
 
@@ -195,6 +215,13 @@ class TaskRunner(QObject):
         if self._on_failed is not None:
             self._on_failed(message, trace)
 
+    @Slot()
+    def _relay_cancelled(self) -> None:
+        """Runs on the UI thread. Re-emit, then call the caller's cancellation handler."""
+        self.cancelled.emit()
+        if self._on_cancelled is not None:
+            self._on_cancelled()
+
     @Slot(int, str)
     def _relay_progress(self, percent: int, message: str) -> None:
         """Runs on the UI thread. Re-emit, then call the caller's progress handler."""
@@ -213,10 +240,24 @@ class TaskRunner(QObject):
             self._thread.quit()
             self._thread.wait(timeout_ms)
 
+    @Slot()
     def _clear(self) -> None:
-        """Drop references and per-task callbacks once the thread is done."""
+        """Drop references and per-task callbacks once the thread is done.
+
+        Ignores a stale notification: if a new task was started after the old thread stopped
+        running but before this queued slot fired, clearing would orphan the new task. (The
+        finished thread may already be deleted by then, so it is not inspected — only whether
+        the thread currently held is still running.)
+        """
+        try:
+            if self._thread is not None and self._thread.isRunning():
+                return
+        except RuntimeError:  # the C++ object behind the held thread is already gone
+            pass
         self._thread = None
         self._worker = None
         self._on_finished = None
         self._on_failed = None
+        self._on_cancelled = None
         self._on_progress = None
+        self.idle.emit()

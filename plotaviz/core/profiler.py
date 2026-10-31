@@ -43,6 +43,10 @@ ID_CARDINALITY_RATIO = 0.95
 #: Rows sampled for profiling when the frame is bigger than this.
 PROFILE_SAMPLE_ROWS = 100_000
 
+#: Most-frequent values kept per categorical column. Large enough that the filter panel can list
+#: every value of any column it offers a multi-select for; the LLM payload still sends only five.
+TOP_VALUES_MAX = 200
+
 #: Suffixes marking a column PlotaViz added itself. These are shown in the preview but are never
 #: offered as chart axes — recommending a chart of your own outlier flags is noise.
 DERIVED_SUFFIXES = ("__outlier",)
@@ -53,6 +57,25 @@ _ID_NAME_PATTERN = re.compile(r"(^|_)(id|uuid|guid|key|code|index|no|num)$", re.
 #: Column-name patterns that hint at a date, used to justify a parse attempt.
 _DATE_NAME_PATTERN = re.compile(
     r"(date|time|timestamp|datetime|day|month|year|created|updated|_at$)", re.IGNORECASE
+)
+
+#: Text that is really a number — ``1,5``, ``-12.75``, ``1.234,56``, ``1,234.56``. Strings like
+#: these parse as dates under ``format="mixed"`` ("1,5" becomes 5 January), which silently turned
+#: European-format measures into timestamps. Day-first dates such as ``01.05.2024`` do not match.
+_NUMBER_TEXT_PATTERN = re.compile(
+    r"^\s*[+-]?(?:\d+(?:[.,]\d+)?|\d{1,3}(?:[.,\s']\d{3})+(?:[.,]\d+)?)\s*$"
+)
+
+#: The minimum structure a real date string has: two separate digit groups ("2024-01-05",
+#: "05/02/2024", "March 3 2024"), a month name next to a number, or a compact ``YYYYMMDD``.
+#: dateutil is far more lenient — it reads "t13" as day 13 and "M2" as two seconds — so short
+#: codes like team or machine IDs were being classified as dates.
+_DATE_SHAPE_PATTERN = re.compile(
+    r"\d+\D+\d+"
+    r"|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d"
+    r"|\d\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
+    r"|^\s*\d{8}\s*$",
+    re.IGNORECASE,
 )
 
 _BOOLEAN_TOKENS = (
@@ -81,7 +104,8 @@ class ColumnProfile:
         is_derived: True for columns PlotaViz itself added (outlier flags). They are shown in the
             preview table but never offered as chart axes.
         stats: Role-specific numbers — ``min``/``max``/``mean``/``median``/``std``/``skew`` for
-            numeric columns, ``min``/``max``/``span_days`` for datetimes.
+            numeric columns; ``min``/``max`` (ISO-8601 strings), ``span_days`` and ``n_periods``
+            for datetimes.
         top_values: Most frequent values with counts, for categorical and boolean columns.
         sample_values: A few example values, used in the LLM prompt and the UI.
         note: Human-readable remark, e.g. why a numeric column was treated as an identifier.
@@ -96,7 +120,7 @@ class ColumnProfile:
     cardinality_ratio: float = 0.0
     is_identifier: bool = False
     is_derived: bool = False
-    stats: dict[str, float] = field(default_factory=dict)
+    stats: dict[str, Any] = field(default_factory=dict)
     top_values: list[tuple[Any, int]] = field(default_factory=list)
     sample_values: list[Any] = field(default_factory=list)
     note: str = ""
@@ -106,8 +130,23 @@ class ColumnProfile:
         """Whether this column is small enough to make a readable categorical axis."""
         return self.n_unique <= LOW_CARDINALITY_MAX
 
-    def to_dict(self) -> dict[str, Any]:
-        """JSON-safe view, used for session files and LLM prompts."""
+    @property
+    def withholds_values(self) -> bool:
+        """Whether this column's raw values should stay out of an LLM prompt.
+
+        Identifiers and free text are never charted, so their values add nothing to a chart
+        recommendation — and they are exactly the columns that hold names, e-mail addresses, and
+        account numbers.
+        """
+        return self.is_identifier or self.role == TEXT
+
+    def to_dict(self, *, for_llm: bool = False) -> dict[str, Any]:
+        """JSON-safe view, used for ``--describe --json`` and LLM prompts.
+
+        Args:
+            for_llm: Withhold example and top values for identifier and free-text columns.
+        """
+        hide = for_llm and self.withholds_values
         return {
             "name": self.name,
             "dtype": self.dtype,
@@ -116,8 +155,8 @@ class ColumnProfile:
             "n_unique": self.n_unique,
             "is_identifier": self.is_identifier,
             "stats": {k: _json_safe(v) for k, v in self.stats.items()},
-            "top_values": [[_json_safe(v), c] for v, c in self.top_values[:5]],
-            "sample_values": [_json_safe(v) for v in self.sample_values[:5]],
+            "top_values": [] if hide else [[_json_safe(v), c] for v, c in self.top_values[:5]],
+            "sample_values": [] if hide else [_json_safe(v) for v in self.sample_values[:5]],
         }
 
 
@@ -211,17 +250,18 @@ class DatasetProfile:
                     best = (a, b, value)
         return best
 
-    def schema_summary(self) -> dict[str, Any]:
+    def schema_summary(self, *, for_llm: bool = False) -> dict[str, Any]:
         """Compact schema + statistics payload.
 
-        This is exactly what gets sent to a language model — schema, summary statistics, and a
-        handful of sample values. The dataset itself never leaves the machine.
+        With ``for_llm=True`` this is exactly what gets sent to a language model — schema, summary
+        statistics, and up to five example and most-frequent values per column, with those values
+        withheld for identifier and free-text columns. The dataset itself never leaves the machine.
         """
         return {
             "n_rows": self.total_rows or self.n_rows,
             "n_cols": self.n_cols,
             "sampled": self.sampled,
-            "columns": [prof.to_dict() for prof in self.columns.values()],
+            "columns": [prof.to_dict(for_llm=for_llm) for prof in self.columns.values()],
             "strongest_correlation": self.strongest_correlation(),
         }
 
@@ -253,11 +293,28 @@ def looks_like_datetime(
         return False
 
     sample = non_null.head(1000).astype(str)
+    compact = float(sample.str.fullmatch(r"\s*\d{8}\s*").mean())  # YYYYMMDD stays a date
+    if compact < threshold and looks_like_number_text(sample):
+        return False
     if name_hint and _DATE_NAME_PATTERN.search(str(series.name or "")):
         threshold = min(threshold, 0.6)
 
     parsed = pd.to_datetime(sample, errors="coerce", format="mixed")
-    return float(parsed.notna().mean()) >= threshold
+    shaped = sample.map(lambda v: bool(_DATE_SHAPE_PATTERN.search(v)))
+    return float((parsed.notna() & shaped).mean()) >= threshold
+
+
+def looks_like_number_text(series: pd.Series, *, threshold: float = 0.8) -> bool:
+    """Whether a text column is mostly numbers written as strings (e.g. ``"1,5"``).
+
+    Used to stop the date parser claiming European-format decimals, which ``format="mixed"``
+    happily reads as day/month pairs.
+    """
+    values = series.dropna().astype(str)
+    if values.empty:
+        return False
+    matches = values.map(lambda v: bool(_NUMBER_TEXT_PATTERN.match(v)))
+    return float(matches.mean()) >= threshold
 
 
 def looks_like_boolean(series: pd.Series) -> bool:
@@ -420,7 +477,7 @@ def profile(
         elif role == DATETIME:
             prof.stats = _datetime_stats(series)
         if role in (CATEGORICAL, BOOLEAN) or (role == TEXT and n_unique <= 50):
-            counts = series.dropna().value_counts().head(10)
+            counts = series.dropna().value_counts().head(TOP_VALUES_MAX)
             prof.top_values = [(_json_safe(idx), int(cnt)) for idx, cnt in counts.items()]
 
         columns[str(name)] = prof
@@ -455,13 +512,20 @@ def _numeric_stats(series: pd.Series) -> dict[str, float]:
     }
 
 
-def _datetime_stats(series: pd.Series) -> dict[str, float]:
-    """Span statistics for a datetime column, expressed in days."""
+def _datetime_stats(series: pd.Series) -> dict[str, Any]:
+    """Range and span statistics for a datetime column.
+
+    ``min``/``max`` are ISO-8601 strings: the filter panel seeds its date pickers from them, and
+    they are readable as-is in an LLM prompt.
+    """
     values = pd.to_datetime(series, errors="coerce").dropna()
     if values.empty:
         return {}
-    span = values.max() - values.min()
+    low, high = values.min(), values.max()
+    span = high - low
     return {
+        "min": low.isoformat(),
+        "max": high.isoformat(),
         "span_days": float(span.total_seconds() / 86400.0),
         "n_periods": float(values.nunique()),
     }

@@ -14,11 +14,12 @@ class AnthropicProvider(Provider):
     """
 
     name = "anthropic"
-    default_model = "claude-sonnet-4-5"
+    # Suggestions only — the model box in Settings is editable.
+    default_model = "claude-sonnet-5-5"
     available_models = (
-        "claude-opus-4-5",
-        "claude-sonnet-4-5",
-        "claude-haiku-4-5",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
     )
 
     def complete(self, system: str, user: str, *, timeout: float) -> str:

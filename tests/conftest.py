@@ -7,7 +7,9 @@ selector tests meaningless.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -114,3 +116,49 @@ def sample_file(request: pytest.FixtureRequest) -> Path:
     if not path.exists():
         pytest.skip(f"{path.name} not generated; run `make samples`")
     return path
+
+
+# ---------------------------------------------------------------------------- GUI helpers
+
+#: Generous: CI runners are slow, and a load includes profiling and a first render.
+LOAD_TIMEOUT_MS = 30_000
+
+
+@pytest.fixture
+def settings(tmp_path: Path) -> Any:
+    """App settings stored under ``tmp_path``, with the static renderer forced on."""
+    from PySide6.QtCore import QSettings
+
+    QSettings.setPath(
+        QSettings.Format.NativeFormat, QSettings.Scope.UserScope, str(tmp_path / "config")
+    )
+    store = QSettings("plotaviz", "plotaviz")
+    store.clear()
+    store.setValue("performance/prefer_static", True)
+    store.sync()
+    return store
+
+
+@pytest.fixture
+def window(qtbot: Any, settings: Any) -> Iterator[Any]:
+    """A main window using the temporary settings."""
+    from plotaviz.ui.main_window import MainWindow
+
+    win = MainWindow()
+    qtbot.addWidget(win)
+    yield win
+    win.runner.cancel()
+    win.runner.wait()
+
+
+def wait_idle(qtbot: Any, win: Any) -> None:
+    """Block until the worker thread has fully stopped and its callbacks have run."""
+    qtbot.waitUntil(lambda: win.runner._thread is None, timeout=LOAD_TIMEOUT_MS)
+
+
+def open_and_wait(qtbot: Any, win: Any, path: Path) -> None:
+    """Open a dataset or session and wait for it to finish loading."""
+    wait_idle(qtbot, win)
+    win.open_path(path)
+    wait_idle(qtbot, win)
+    assert win.analysis is not None
