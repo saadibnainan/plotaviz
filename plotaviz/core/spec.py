@@ -41,6 +41,14 @@ AGGREGATIONS: tuple[str, ...] = ("sum", "mean", "median", "min", "max", "count",
 #: Charts that consume a single column and need no ``y``.
 UNIVARIATE_CHARTS: frozenset[str] = frozenset({"histogram", "kde", "bar", "treemap", "pie"})
 
+#: Charts that can be split into one panel per category (``options["facet"]``).
+FACET_CHARTS: frozenset[str] = frozenset(
+    {"histogram", "bar", "grouped_bar", "stacked_bar", "scatter", "line", "area", "box", "violin"}
+)
+
+#: Most panels drawn; further categories are grouped into one "Other" panel.
+MAX_FACETS = 12
+
 #: Charts that ignore ``x``/``y`` and operate on the whole numeric frame.
 MATRIX_CHARTS: frozenset[str] = frozenset({"correlation_heatmap", "pair_plot"})
 
@@ -126,7 +134,13 @@ class ChartSpec:
 
         if columns is not None:
             known = set(columns)
-            for role, col in (("x", self.x), ("y", self.y), ("color", self.color)):
+            facet = self.options.get("facet") or None
+            for role, col in (
+                ("x", self.x),
+                ("y", self.y),
+                ("color", self.color),
+                ("panels", facet),
+            ):
                 if col is not None and col not in known:
                     preview = ", ".join(sorted(known)[:12])
                     raise SpecError(
@@ -140,6 +154,12 @@ class ChartSpec:
         return self
 
     # ---------------------------------------------------------------- convenience
+
+    @property
+    def facet(self) -> str | None:
+        """The column the chart is split into panels by, if it is a chart that supports it."""
+        facet = self.options.get("facet")
+        return str(facet) if facet and self.chart in FACET_CHARTS else None
 
     @property
     def columns_used(self) -> list[str]:

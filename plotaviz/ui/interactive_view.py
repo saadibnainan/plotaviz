@@ -27,6 +27,7 @@ from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 from ..core.errors import PlotError
 from ..core.plotter import MAX_POINTS, build_matplotlib, build_plotly, prepare
 from ..core.spec import ChartSpec
+from .theme import darken_figure
 
 #: Set once by :func:`webengine_available` so the probe import happens at most once.
 _WEBENGINE_STATE: bool | None = None
@@ -64,27 +65,42 @@ class RenderResult:
 
 
 def build_render(
-    df: pd.DataFrame, spec: ChartSpec, *, interactive: bool, max_points: int | None = None
+    df: pd.DataFrame,
+    spec: ChartSpec,
+    *,
+    interactive: bool,
+    max_points: int | None = None,
+    dark: bool = False,
 ) -> RenderResult:
     """Prepare and build a chart. Pure and Qt-free, so it can run on a worker thread.
+
+    Args:
+        dark: Style the chart for a dark window. On-screen only; exports never use this.
 
     Raises:
         PlotError: If the chart cannot be built at all.
     """
     prepared = prepare(df, spec, max_points=max_points or MAX_POINTS)
     notes = list(prepared.notes)
+
+    def static(fell_back: bool = False) -> RenderResult:
+        figure = build_matplotlib(df, spec, prepared=prepared, figsize=(9, 5.5), dpi=100)
+        if dark:
+            darken_figure(figure)
+        return RenderResult(figure=figure, notes=notes, fell_back=fell_back)
+
     if interactive:
         try:
             figure = build_plotly(df, spec, prepared=prepared)
+            if dark:
+                figure.update_layout(template="plotly_dark")
             return RenderResult(figure_json=figure.to_json(), notes=notes)
         except PlotError:
             raise
         except Exception as exc:
             notes.append(f"The interactive view failed ({exc}); showing a static chart instead.")
-            figure = build_matplotlib(df, spec, prepared=prepared, figsize=(9, 5.5), dpi=100)
-            return RenderResult(figure=figure, notes=notes, fell_back=True)
-    figure = build_matplotlib(df, spec, prepared=prepared, figsize=(9, 5.5), dpi=100)
-    return RenderResult(figure=figure, notes=notes)
+            return static(fell_back=True)
+    return static()
 
 
 #: The page the interactive view loads once. Charts are pushed into it with Plotly.react.

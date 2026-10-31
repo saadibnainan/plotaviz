@@ -153,13 +153,15 @@ def window(qtbot: Any, settings: Any) -> Iterator[Any]:
 
 
 def wait_idle(qtbot: Any, win: Any) -> None:
-    """Block until the worker thread has fully stopped and its callbacks have run."""
+    """Block until every worker has stopped, its callbacks have run, and nothing is queued."""
+    runners = (win.runner, win.render_runner, win.tile_runner, win.preview_runner)
     qtbot.waitUntil(
         lambda: (
-            all(r._thread is None for r in (win.runner, win.render_runner, win.tile_runner))
+            all(r._thread is None for r in runners)
             and not win._pending
             and not win._render_again
             and not win._tiles_again
+            and win._preview_next is None
         ),
         timeout=LOAD_TIMEOUT_MS,
     )

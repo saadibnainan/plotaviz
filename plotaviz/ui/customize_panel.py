@@ -40,6 +40,7 @@ OWNED_OPTIONS = (
     "sort_ascending",
     "bins",
     "palette",
+    "facet",
 )
 
 
@@ -89,6 +90,13 @@ class CustomizePanel(QGroupBox):
         form.addRow("Bar order", self.sort_check)
         form.addRow("Histogram bins", self.bins_spin)
         form.addRow("Colours", self.palette_combo)
+        self.facet_combo = QComboBox(self)
+        self.facet_combo.setToolTip(
+            "Draw one small chart per category of this column, side by side. Useful when a "
+            "colour split has too many series to tell apart."
+        )
+        self.set_facet_columns([])
+        form.addRow("Panels by", self.facet_combo)
 
         self.apply_button = QPushButton("Apply", self)
         self.apply_button.clicked.connect(self._emit)
@@ -118,6 +126,10 @@ class CustomizePanel(QGroupBox):
         self.top_n_spin.setValue(int(opts.get("top_n") or 0))
         self.sort_check.setChecked(bool(opts.get("sort_ascending")))
         self.bins_spin.setValue(int(opts.get("bins") or 0))
+        facet = str(opts.get("facet") or "")
+        if facet and self.facet_combo.findData(facet) < 0:
+            self.facet_combo.addItem(facet, facet)
+        self.facet_combo.setCurrentIndex(max(0, self.facet_combo.findData(facet)))
         index = self.palette_combo.findData(str(opts.get("palette") or ""))
         self.palette_combo.setCurrentIndex(max(0, index))
 
@@ -137,9 +149,20 @@ class CustomizePanel(QGroupBox):
             options["sort_ascending"] = True
         if self.bins_spin.value():
             options["bins"] = self.bins_spin.value()
+        if self.facet_combo.currentData():
+            options["facet"] = self.facet_combo.currentData()
         if self.palette_combo.currentData():
             options["palette"] = self.palette_combo.currentData()
         return {"title": self.title_edit.text().strip() or None, "options": options}
+
+    def set_facet_columns(self, columns: list[str]) -> None:
+        """Offer these columns (categories) for one-panel-per-category charts."""
+        current = self.facet_combo.currentData()
+        self.facet_combo.clear()
+        self.facet_combo.addItem("None (one chart)", "")
+        for column in columns:
+            self.facet_combo.addItem(column, column)
+        self.facet_combo.setCurrentIndex(max(0, self.facet_combo.findData(current or "")))
 
     def _emit(self) -> None:
         self.customized.emit(self.values())

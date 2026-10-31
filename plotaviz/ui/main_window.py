@@ -16,14 +16,23 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QByteArray, QSettings, Qt, QUrl
-from PySide6.QtGui import QAction, QDesktopServices, QDragEnterEvent, QDropEvent, QKeySequence
+from PySide6.QtCore import QByteArray, QSettings, Qt, QTimer, QUrl
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QDesktopServices,
+    QDragEnterEvent,
+    QDropEvent,
+    QGuiApplication,
+    QKeySequence,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -32,6 +41,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTableView,
     QTabWidget,
+    QTextBrowser,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -55,7 +65,8 @@ from .import_dialog import ImportDialog
 from .interactive_view import ChartView, RenderResult, build_render
 from .nl_query_bar import NLQueryBar
 from .settings_dialog import SettingsDialog
-from .table_model import DataFrameModel
+from .table_model import DataFrameModel, column_summary_html
+from .theme import apply_theme
 from .type_override import TypeOverridePanel
 from .workers import TaskRunner
 
@@ -119,6 +130,11 @@ class MainWindow(QMainWindow):
         self._build_docks()
         self._build_menus()
         self._build_status_bar()
+        self._dark = False
+        self._apply_theme()
+        hints = QGuiApplication.styleHints()
+        if hasattr(hints, "colorSchemeChanged"):
+            hints.colorSchemeChanged.connect(self._on_system_scheme_changed)
         self._restore_geometry()
         self._refresh_llm_state()
 
@@ -180,7 +196,36 @@ class MainWindow(QMainWindow):
         self.preview.setAlternatingRowColors(True)
         self.preview.setSelectionBehavior(QTableView.SelectionBehavior.SelectColumns)
         self.preview.horizontalHeader().setStretchLastSection(True)
-        self.preview.setSortingEnabled(False)
+        # Header clicks sort the whole frame (DataFrameModel.sort), not just the visible rows,
+        # and show that column's statistics underneath.
+        self.preview.setSortingEnabled(True)
+        self.preview.horizontalHeader().setSortIndicatorShown(True)
+        self.preview.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        self.preview.horizontalHeader().sectionClicked.connect(self._show_column_stats)
+        self.preview_model.view_changed.connect(
+            lambda: self.preview_status.setText(self.preview_model.status_text())
+        )
+        self.preview_runner = TaskRunner(self)
+        self.preview_runner.idle.connect(self._preview_if_requested)
+        self._preview_next: tuple[Any, Any] | None = None
+        self.preview_model.scheduler = self._schedule_preview
+
+        self.preview_search = QLineEdit(left)
+        self.preview_search.setPlaceholderText("Search all rows…")
+        self.preview_search.setClearButtonEnabled(True)
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(300)
+        self._search_timer.timeout.connect(
+            lambda: self.preview_model.set_search(self.preview_search.text())
+        )
+        self.preview_search.textChanged.connect(lambda _: self._search_timer.start())
+
+        self.column_stats = QTextBrowser(left)
+        self.column_stats.setMaximumHeight(170)
+        self.column_stats.setPlaceholderText(
+            "Click a column header to sort and see its statistics."
+        )
 
         self.preview_status = QLabel("No data loaded.", left)
         self.preview_status.setStyleSheet("color: palette(mid); font-size: 11px;")
@@ -194,8 +239,10 @@ class MainWindow(QMainWindow):
         preview_page = QWidget(data_tabs)
         preview_layout = QVBoxLayout(preview_page)
         preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.addWidget(self.preview)
+        preview_layout.addWidget(self.preview_search)
+        preview_layout.addWidget(self.preview, stretch=1)
         preview_layout.addWidget(self.preview_status)
+        preview_layout.addWidget(self.column_stats)
         data_tabs.addTab(preview_page, "Preview")
         data_tabs.addTab(self.cleaning_report, "Cleaning report")
 
@@ -340,6 +387,18 @@ class MainWindow(QMainWindow):
         self.pin_action.setShortcut("Ctrl+D")
         self.pin_action.triggered.connect(self.pin_current)
         view_menu.addAction(self.pin_action)
+        view_menu.addSeparator()
+        theme_menu = view_menu.addMenu("&Theme")
+        self.theme_group = QActionGroup(self)
+        self.theme_group.setExclusive(True)
+        current = str(self.settings.value("appearance/theme", "system"))
+        for value, label in (("system", "Follow the system"), ("light", "Light"), ("dark", "Dark")):
+            action = QAction(label, self, checkable=True)
+            action.setData(value)
+            action.setChecked(value == current)
+            action.triggered.connect(lambda _=False, v=value: self.set_theme(v))
+            self.theme_group.addAction(action)
+            theme_menu.addAction(action)
         view_menu.addSeparator()
         settings_action = QAction("&Settings…", self)
         settings_action.setShortcut(QKeySequence.StandardKey.Preferences)
@@ -542,6 +601,9 @@ class MainWindow(QMainWindow):
                 analysis.profile, analysis.type_overrides, inferred=analysis.inferred_types
             )
             self.filter_panel.set_profile(analysis.profile)
+            self.customize_panel.set_facet_columns(
+                [*analysis.profile.categorical, *analysis.profile.boolean]
+            )
         self.nl_bar.set_columns(list(analysis.df.columns))
 
         self._populate_recommendations()
@@ -565,6 +627,60 @@ class MainWindow(QMainWindow):
 
         if warning:
             self._warn("Session restored with differences", warning)
+
+    # ------------------------------------------------------------------ theme
+
+    def set_theme(self, theme: str) -> None:
+        """Switch between system, light, and dark, and redraw what is on screen."""
+        self.settings.setValue("appearance/theme", theme)
+        for action in self.theme_group.actions():
+            action.setChecked(action.data() == theme)
+        self._apply_theme()
+
+    def _apply_theme(self) -> None:
+        theme = str(self.settings.value("appearance/theme", "system"))
+        self._dark = apply_theme(theme)
+        self.preview_model.dark = self._dark
+        self.preview_model.headerDataChanged.emit(
+            Qt.Orientation.Horizontal, 0, max(0, self.preview_model.columnCount() - 1)
+        )
+        if self.analysis is not None:
+            self._render_current(changed=False)
+            self._refresh_dashboard(force=True, mark_dirty=False)
+
+    def _on_system_scheme_changed(self, *_: object) -> None:
+        if str(self.settings.value("appearance/theme", "system")) == "system":
+            self._apply_theme()
+
+    # ------------------------------------------------------------------ data preview
+
+    def _schedule_preview(self, work: Any, done: Any) -> None:
+        """Run a preview sort/search on its worker; only the newest request is applied."""
+        if self.preview_runner.busy:
+            self._preview_next = (work, done)
+            return
+        self.preview_runner.start(
+            work,
+            on_finished=lambda view: None if self._preview_next else done(view),
+            on_failed=lambda message, _trace: self.preview_status.setText(message),
+        )
+
+    def _preview_if_requested(self) -> None:
+        if self._preview_next is not None:
+            work, done = self._preview_next
+            self._preview_next = None
+            self._schedule_preview(work, done)
+
+    def _show_column_stats(self, section: int) -> None:
+        """Show the clicked column's profile under the preview."""
+        if self.analysis is None or self.analysis.profile is None:
+            return
+        columns = list(self.analysis.df.columns)
+        if not 0 <= section < len(columns):
+            return
+        prof = self.analysis.profile.columns.get(str(columns[section]))
+        if prof is not None:
+            self.column_stats.setHtml(column_summary_html(prof))
 
     # ------------------------------------------------------------------ unsaved changes
 
@@ -717,8 +833,11 @@ class MainWindow(QMainWindow):
         interactive = self.chart_view.interactive
         max_points = int(self.settings.value("performance/max_points", MAX_POINTS))
         generation = self._render_generation
+        dark = self._dark
         self.render_runner.start(
-            lambda: build_render(df, spec, interactive=interactive, max_points=max_points),
+            lambda: build_render(
+                df, spec, interactive=interactive, max_points=max_points, dark=dark
+            ),
             on_finished=lambda result: self._install_render(result, generation),
             on_failed=lambda message, trace: self._render_failed(message, trace, generation),
         )
@@ -919,7 +1038,7 @@ class MainWindow(QMainWindow):
         if index is not None:
             self.update_tile_button.setText(f"Update tile {index + 1}")
 
-    def _refresh_dashboard(self, *, force: bool = False) -> None:
+    def _refresh_dashboard(self, *, force: bool = False, mark_dirty: bool = True) -> None:
         """Redraw the tiles if the Dashboard tab is showing; otherwise mark them stale.
 
         ``force`` marks the dashboard stale first — used after pinning, removing, reordering,
@@ -930,7 +1049,8 @@ class MainWindow(QMainWindow):
         if force:
             self._dashboard_stale = True
             self._tiles_generation += 1  # anything in flight now describes old tiles
-            self._set_dirty()
+            if mark_dirty:
+                self._set_dirty()
         if not self._dashboard_stale or self.central_tabs.currentIndex() != 1:
             return
         self._dashboard_stale = False
@@ -949,8 +1069,9 @@ class MainWindow(QMainWindow):
             if not self._tiles_again and generation == self._tiles_generation:
                 self.dashboard_view.set_tiles(df, specs, statuses, built)
 
+        dark = self._dark
         self.tile_runner.start(
-            lambda: build_tiles(df, specs, statuses),
+            lambda: build_tiles(df, specs, statuses, dark=dark),
             on_finished=installed,
             on_failed=lambda message, _trace: self.statusBar().showMessage(message),
         )
@@ -1458,7 +1579,7 @@ class MainWindow(QMainWindow):
         self.settings.sync()
         self.runner.cancel()
         self.runner.wait()
-        for worker in (self.render_runner, self.tile_runner):
+        for worker in (self.render_runner, self.tile_runner, self.preview_runner):
             worker.cancel()
             worker.wait()
         self.chart_view.cleanup()

@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 from ..core.errors import PlotaVizError
 from ..core.plotter import TILE_MAX_POINTS, build_matplotlib, prepare
 from ..core.spec import ChartSpec
+from .theme import darken_figure
 
 #: Height of one tile's chart, in pixels.
 TILE_HEIGHT = 320
@@ -220,7 +221,9 @@ class DashboardView(QWidget):
             self.grid.setColumnStretch(column, 0)
 
 
-def build_tiles(df: pd.DataFrame, specs: list[ChartSpec], statuses: list[str | None]) -> list[Any]:
+def build_tiles(
+    df: pd.DataFrame, specs: list[ChartSpec], statuses: list[str | None], *, dark: bool = False
+) -> list[Any]:
     """Build every tile's figure, or the reason it cannot be drawn. Qt-free: safe on a worker.
 
     Returns:
@@ -243,5 +246,7 @@ def build_tiles(df: pd.DataFrame, specs: list[ChartSpec], statuses: list[str | N
         figure.set_layout_engine("constrained")
         for axes in figure.axes:
             axes.title.set_fontsize(10)  # tiles are narrow; full-size titles overflow them
+        if dark:
+            darken_figure(figure)
         built.append(figure)
     return built
