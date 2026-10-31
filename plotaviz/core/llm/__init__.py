@@ -41,6 +41,14 @@ from .openai import OpenAIProvider
 
 logger = logging.getLogger(__name__)
 
+#: Exactly what a remote request contains. Shown in Settings and in the consent prompt, so the
+#: wording has to match :func:`build_prompt` — not round it down.
+CONSENT_TEXT = (
+    "PlotaViz sends the column names, summary statistics (counts, min/max, mean, skew), and up "
+    "to five example and most-frequent values per column. Values from identifier and free-text "
+    "columns are withheld. The dataset itself is never uploaded."
+)
+
 #: Every provider PlotaViz can use, keyed by the name stored in settings and the keyring.
 PROVIDERS: dict[str, type[Provider]] = {
     AnthropicProvider.name: AnthropicProvider,
@@ -50,6 +58,7 @@ PROVIDERS: dict[str, type[Provider]] = {
 }
 
 __all__ = [
+    "CONSENT_TEXT",
     "KEYRING_SERVICE",
     "PROVIDERS",
     "AnthropicProvider",
@@ -118,10 +127,8 @@ class LLMAssistant:
         """The text to show before the first remote request, or ``None`` if none is needed."""
         if self.provider is None or not self.provider.sends_data_off_machine:
             return None
-        return (
-            f"PlotaViz will send this dataset's column names, summary statistics, and up to "
-            f"{5} sample rows to {self.provider.name}. The dataset itself is never uploaded.\n\n"
-            "To keep everything on this machine, use the Ollama provider instead."
+        return f"{CONSENT_TEXT} It goes to {self.provider.name}.\n\n" + (
+            "To keep everything on this machine, use a local Ollama server instead."
         )
 
     # ------------------------------------------------------------------ jobs
@@ -157,7 +164,7 @@ class LLMAssistant:
             )
 
         prompt_rows = sample_rows or []
-        result = self.provider.suggest_chart(profile, question=question)
+        result = self.provider.suggest_chart(profile, question=question, sample_rows=prompt_rows)
         logger.debug(
             "NL query answered by %s/%s with %d sample rows",
             result.provider,

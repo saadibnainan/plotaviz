@@ -28,7 +28,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core.llm import PROVIDERS, OllamaProvider, delete_api_key, get_api_key, set_api_key
+from ..core.llm import (
+    CONSENT_TEXT,
+    PROVIDERS,
+    OllamaProvider,
+    delete_api_key,
+    get_api_key,
+    set_api_key,
+)
+from ..core.llm.ollama import DEFAULT_HOST, is_loopback
 from ..core.loader import DEFAULT_LARGE_FILE_MB
 from ..core.plotter import MAX_POINTS
 
@@ -39,7 +47,7 @@ _PROVIDER_LABELS = {
     "anthropic": "Anthropic (Claude)",
     "openai": "OpenAI",
     "gemini": "Google Gemini",
-    "ollama": "Ollama (local — nothing leaves this machine)",
+    "ollama": "Ollama (local server — nothing leaves this machine)",
 }
 
 
@@ -104,17 +112,23 @@ class SettingsDialog(QDialog):
         llm_form.addRow("", key_note)
 
         self.host_edit = QLineEdit(llm_box)
-        self.host_edit.setPlaceholderText("http://localhost:11434")
+        self.host_edit.setPlaceholderText(DEFAULT_HOST)
+        self.host_edit.textChanged.connect(self._sync_consent)
         llm_form.addRow("Ollama host", self.host_edit)
 
         self.consent_check = QCheckBox(
-            "Allow sending column names, summary statistics, and up to 5 sample rows", llm_box
+            "Allow sending this summary to the selected provider when I ask for a chart", llm_box
         )
-        self.consent_check.setToolTip(
-            "The dataset itself is never uploaded. Only schema and statistics are sent, and only "
-            "when you ask for a suggestion."
-        )
+        self.consent_check.setToolTip(CONSENT_TEXT)
         llm_form.addRow("Consent", self.consent_check)
+        consent_note = QLabel(CONSENT_TEXT, llm_box)
+        consent_note.setWordWrap(True)
+        consent_note.setStyleSheet("color: palette(mid); font-size: 11px;")
+        llm_form.addRow("", consent_note)
+        # Consent is remembered per provider and only for the session of this dialog until saved.
+        self._consent: dict[str, bool] = {}
+        self._consent_provider = ""
+        self.consent_check.toggled.connect(self._remember_consent)
 
         self.status_label = QLabel("", llm_box)
         self.status_label.setWordWrap(True)
@@ -176,10 +190,11 @@ class SettingsDialog(QDialog):
         index = self.provider_combo.findData(provider)
         self.provider_combo.setCurrentIndex(max(0, index))
 
-        self.host_edit.setText(
-            str(self._settings.value("llm/ollama_host", "http://localhost:11434"))
-        )
-        self.consent_check.setChecked(self._settings.value("llm/consent", False, type=bool))
+        self.host_edit.setText(str(self._settings.value("llm/ollama_host", DEFAULT_HOST)))
+        self._consent = {
+            name: self._settings.value(f"llm/consent/{name}", False, type=bool)
+            for name in PROVIDERS
+        }
         self.large_file_spin.setValue(
             int(self._settings.value("performance/large_file_mb", DEFAULT_LARGE_FILE_MB))
         )
@@ -201,7 +216,12 @@ class SettingsDialog(QDialog):
         self._settings.setValue("llm/provider", provider)
         self._settings.setValue("llm/model", self.model_combo.currentText().strip())
         self._settings.setValue("llm/ollama_host", self.host_edit.text().strip())
-        self._settings.setValue("llm/consent", self.consent_check.isChecked())
+        # The old single, global consent flag is retired: it carried agreement for one provider
+        # over to every other, so anyone who had it set is asked again. QSettings.remove() also
+        # drops sub-keys, so this has to happen before the per-provider values are written.
+        self._settings.remove("llm/consent")
+        for name, granted in self._consent.items():
+            self._settings.setValue(f"llm/consent/{name}", granted)
         self._settings.setValue("performance/large_file_mb", self.large_file_spin.value())
         self._settings.setValue("performance/max_points", self.max_points_spin.value())
         self._settings.setValue("performance/prefer_static", self.static_check.isChecked())
@@ -229,7 +249,8 @@ class SettingsDialog(QDialog):
         self.key_edit.setEnabled(needs_key)
         self.clear_key_button.setEnabled(needs_key)
         self.host_edit.setEnabled(is_ollama)
-        self.consent_check.setEnabled(needs_key)
+        self._consent_provider = provider
+        self._sync_consent()
 
         self.model_combo.clear()
         if provider:
@@ -246,12 +267,7 @@ class SettingsDialog(QDialog):
             self.status_label.setStyleSheet("color: palette(mid); font-size: 11px;")
         elif is_ollama:
             self.key_edit.clear()
-            self.consent_check.setChecked(True)
-            self.status_label.setText(
-                "Ollama runs locally. No API key and no network access are needed, and no data "
-                "leaves this machine."
-            )
-            self.status_label.setStyleSheet("color: #1F7A5C; font-size: 11px;")
+            self._describe_ollama_host()
         else:
             self.key_edit.clear()
             self.status_label.setText(
@@ -259,6 +275,46 @@ class SettingsDialog(QDialog):
                 "query bar works normally."
             )
             self.status_label.setStyleSheet("color: palette(mid); font-size: 11px;")
+
+    def _ollama_is_remote(self) -> bool:
+        """Whether the Ollama host field points somewhere other than this machine."""
+        return not is_loopback(self.host_edit.text().strip() or DEFAULT_HOST)
+
+    def _sync_consent(self, *_: object) -> None:
+        """Show the selected provider's own consent, and only where data would leave the machine.
+
+        Selecting Ollama used to tick the shared consent box, which then stayed ticked when the
+        user switched to a hosted provider — consent nobody gave. Consent is now per provider and
+        is never ticked on the user's behalf.
+        """
+        provider = self._consent_provider
+        leaves_machine = bool(provider) and (provider != "ollama" or self._ollama_is_remote())
+        self.consent_check.blockSignals(True)
+        self.consent_check.setChecked(bool(self._consent.get(provider, False)))
+        self.consent_check.blockSignals(False)
+        self.consent_check.setEnabled(leaves_machine)
+        if provider == "ollama":
+            self._describe_ollama_host()
+
+    def _remember_consent(self, checked: bool) -> None:
+        """Record the consent box for the provider currently selected."""
+        if self._consent_provider:
+            self._consent[self._consent_provider] = bool(checked)
+
+    def _describe_ollama_host(self) -> None:
+        """Say plainly whether the configured Ollama server is local."""
+        if self._ollama_is_remote():
+            self.status_label.setText(
+                "This Ollama host is not on this machine, so the summary below is sent over the "
+                "network. Consent is required, as for a hosted provider."
+            )
+            self.status_label.setStyleSheet("color: #A8681F; font-size: 11px;")
+        else:
+            self.status_label.setText(
+                "Ollama runs locally. No API key and no network access are needed, and no data "
+                "leaves this machine."
+            )
+            self.status_label.setStyleSheet("color: #1F7A5C; font-size: 11px;")
 
     def _forget_key(self) -> None:
         """Delete the stored key for the selected provider."""
@@ -281,7 +337,7 @@ class SettingsDialog(QDialog):
             return
 
         if provider == "ollama":
-            client = OllamaProvider(host=self.host_edit.text().strip() or "http://localhost:11434")
+            client = OllamaProvider(host=self.host_edit.text().strip() or DEFAULT_HOST)
             if client.is_running():
                 models = client.list_models()
                 listed = ", ".join(models[:5]) if models else "no models pulled yet"

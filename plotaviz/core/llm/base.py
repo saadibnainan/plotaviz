@@ -172,6 +172,7 @@ class Provider(ABC):
         *,
         question: str | None = None,
         candidates: list[ChartSpec] | None = None,
+        sample_rows: list[dict[str, Any]] | None = None,
     ) -> LLMResult:
         """Ask the model for a chart spec.
 
@@ -183,6 +184,8 @@ class Provider(ABC):
             question: The user's natural-language request, if any.
             candidates: The local engine's top candidates, sent as context so the model can agree
                 with a good ranking rather than inventing something worse.
+            sample_rows: Optional example rows, capped at :data:`SAMPLE_ROWS`. The app sends none
+                by default; per-column example values are already in the schema summary.
 
         Returns:
             A validated :class:`LLMResult`.
@@ -191,7 +194,9 @@ class Provider(ABC):
             LLMError: If the request fails or the reply is not a usable spec. Callers are
                 expected to catch this and fall back to the local engine.
         """
-        prompt = build_prompt(profile, question=question, candidates=candidates)
+        prompt = build_prompt(
+            profile, question=question, candidates=candidates, sample_rows=sample_rows
+        )
         raw = self.complete(_SYSTEM_PROMPT, prompt, timeout=self.timeout)
         payload = extract_json(raw)
         spec = ChartSpec.from_dict(payload)
@@ -221,10 +226,12 @@ def build_prompt(
 ) -> str:
     """Assemble the user message.
 
-    Contains the schema, per-column statistics, at most :data:`SAMPLE_ROWS` example rows, and the
-    local engine's candidates. Deliberately does not contain the dataset.
+    Contains the schema, per-column statistics with up to five example and most-frequent values
+    (withheld for identifier and free-text columns), at most :data:`SAMPLE_ROWS` example rows when
+    the caller passes them, and the local engine's candidates. Deliberately does not contain the
+    dataset.
     """
-    summary = profile.schema_summary()
+    summary = profile.schema_summary(for_llm=True)
     parts = [
         "Dataset schema and summary statistics:",
         json.dumps(summary, indent=2, default=str),

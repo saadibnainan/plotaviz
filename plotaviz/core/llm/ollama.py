@@ -7,7 +7,9 @@ to recommend.
 
 from __future__ import annotations
 
+import ipaddress
 import json
+from urllib.parse import urlparse
 
 from ..errors import LLMError
 from .base import DEFAULT_TIMEOUT, Provider
@@ -40,6 +42,9 @@ class OllamaProvider(Provider):
     ) -> None:
         super().__init__(model=model, api_key=api_key, timeout=timeout)
         self.host = host.rstrip("/")
+        # The host is user-editable. Only a loopback server keeps data on this machine; anything
+        # else is a remote service and goes through the same consent gate as a hosted provider.
+        self.sends_data_off_machine = not is_loopback(self.host)
 
     def is_configured(self) -> bool:
         """Ollama needs no key — it is configured if the server answers."""
@@ -111,3 +116,14 @@ class OllamaProvider(Provider):
             return str(response.json().get("response", ""))
         except json.JSONDecodeError as exc:
             raise LLMError("Ollama returned a malformed response.", hint=str(exc)) from exc
+
+
+def is_loopback(url: str) -> bool:
+    """Whether ``url`` points at this machine (``localhost``, ``127.0.0.0/8``, ``::1``)."""
+    host = urlparse(url if "://" in url else f"http://{url}").hostname or ""
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
