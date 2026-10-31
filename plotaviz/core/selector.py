@@ -426,7 +426,10 @@ class ChartSelector:
                         f"{spec.y!r} is heavily skewed, which this chart shows better than "
                         "an average."
                     )
-                elif spec.chart in {"bar", "line", "scatter"}:
+                elif spec.chart in {"bar", "line", "scatter"} and (
+                    float(profile.columns[spec.y].stats.get("min", 0.0)) > 0
+                ):
+                    # A log axis cannot show zero or negative values — they would silently vanish.
                     spec.options.setdefault("log_y", True)
                     notes.append(f"{spec.y!r} is heavily skewed, so a log y axis is suggested.")
 

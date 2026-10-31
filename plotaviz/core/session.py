@@ -56,6 +56,9 @@ class Session:
     app_version: str = "0.1.0"
     saved_at: str = ""
     version: int = SESSION_VERSION
+    #: Hash of the source as found by the last :meth:`check_source`, so the loader can reuse it
+    #: instead of reading a multi-gigabyte file a second time. Never written to disk.
+    current_hash: str = field(default="", repr=False, compare=False)
 
     # ------------------------------------------------------------------ writing
 
@@ -165,7 +168,9 @@ class Session:
                 f"The source file {source} is missing. Open the dataset again to restore this "
                 "session."
             )
-        if self.source_hash and file_hash(source) != self.source_hash:
+        if self.source_hash:
+            self.current_hash = file_hash(source)
+        if self.source_hash and self.current_hash != self.source_hash:
             saved = self.saved_at or "the time it was saved"
             return (
                 f"{source.name} has changed since {saved}. The cleaning steps and chart will be "

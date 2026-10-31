@@ -16,7 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QSettings, Qt, QUrl
+from PySide6.QtCore import QByteArray, QSettings, Qt, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QDragEnterEvent, QDropEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -42,6 +42,7 @@ from ..core import loader
 from ..core.analysis import Analysis
 from ..core.errors import PlotaVizError
 from ..core.llm import LLMAssistant, OllamaProvider, get_provider
+from ..core.plotter import MAX_POINTS
 from ..core.preprocess import QueryFilter
 from ..core.session import SESSION_SUFFIX, Session
 from ..core.spec import ChartSpec
@@ -84,6 +85,7 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("plotaviz", "plotaviz")
         self.analysis: Analysis | None = None
         self.session_path: Path | None = None
+        self._session_view: dict[str, Any] = {}
         self.runner = TaskRunner(self)
         # The latest replay requested while another task was running. Only the newest is kept —
         # a burst of filter edits needs one replay with the final state, not one per edit.
@@ -327,6 +329,7 @@ class MainWindow(QMainWindow):
                 return
             if not self._confirm_session_queries(session):
                 return
+            self._session_view = dict(session.view)
             self._run(self._load_session_task, session, path, label=f"Restoring {path.name}…")
         else:
             self._run(self._load_dataset_task, path, label=f"Loading {path.name}…")
@@ -430,6 +433,10 @@ class MainWindow(QMainWindow):
 
         name = analysis.load_result.path.name
         self.setWindowTitle(f"{name} — {__app_name__}")
+        self.filter_panel.set_filters(analysis.pipeline.filters)
+        view, self._session_view = self._session_view, {}
+        if session_path is not None:
+            self._restore_view(view)
         self.statusBar().showMessage(analysis.load_result.summary())
         self._remember_recent(analysis.load_result.path)
 
@@ -514,7 +521,11 @@ class MainWindow(QMainWindow):
             self.chart_view.show_message("No chart is selected yet.")
             return
         try:
-            notes = self.chart_view.render_spec(self.analysis.df, self.analysis.spec)
+            notes = self.chart_view.render_spec(
+                self.analysis.df,
+                self.analysis.spec,
+                max_points=int(self.settings.value("performance/max_points", MAX_POINTS)),
+            )
         except PlotaVizError as exc:
             self.chart_view.show_message(str(exc))
             self.statusBar().showMessage("The chart could not be drawn.")
@@ -964,6 +975,15 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, title, message)
 
     # ------------------------------------------------------------------ window state
+
+    def _restore_view(self, view: dict[str, Any]) -> None:
+        """Apply the window state a session saved: the active tab and the window geometry."""
+        tab = view.get("active_tab")
+        if isinstance(tab, int) and 0 <= tab < self.analysis_tabs.count():
+            self.analysis_tabs.setCurrentIndex(tab)
+        geometry = view.get("geometry")
+        if isinstance(geometry, str) and geometry:
+            self.restoreGeometry(QByteArray.fromBase64(geometry.encode()))
 
     def _restore_geometry(self) -> None:
         """Restore window size and dock layout from the last session."""

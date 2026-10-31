@@ -129,6 +129,7 @@ def load(
     sample_rows: int = DEFAULT_SAMPLE_ROWS,
     sheet: str | int | None = None,
     force_engine: str | None = None,
+    known_hash: str | None = None,
 ) -> LoadResult:
     """Read a dataset from disk.
 
@@ -140,6 +141,8 @@ def load(
         sheet: Excel sheet name or index. Defaults to the first sheet.
         force_engine: ``"pandas"`` or ``"polars"`` to override the size heuristic. Mostly for
             tests and for users who know their machine.
+        known_hash: SHA-256 the caller already computed for this file (a session restore does),
+            to skip hashing it again.
 
     Returns:
         A :class:`LoadResult`.
@@ -187,7 +190,7 @@ def load(
 
     result.path = path
     result.size_bytes = size_bytes
-    result.file_hash = file_hash(path)
+    result.file_hash = known_hash or file_hash(path)
     if not result.total_rows:
         result.total_rows = len(result.df)
     return result

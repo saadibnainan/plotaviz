@@ -13,8 +13,10 @@ class GeminiProvider(Provider):
     """
 
     name = "gemini"
-    default_model = "gemini-2.0-flash"
-    available_models = ("gemini-2.5-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite")
+    # Suggestions only — the model box in Settings is editable. Stable IDs from Google's model
+    # list as of October 2026.
+    default_model = "gemini-3.5-flash"
+    available_models = ("gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite")
 
     def complete(self, system: str, user: str, *, timeout: float) -> str:
         """Send one message and return the text of the reply."""

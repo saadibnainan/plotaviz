@@ -263,6 +263,8 @@ class Analysis:
             changed since the session was saved.
         """
         warning = session.check_source()
+        if session.current_hash:
+            load_kwargs.setdefault("known_hash", session.current_hash)
         load_result = loader.load(session.source_path, **load_kwargs)
         analysis = cls(
             load_result=load_result,

@@ -186,7 +186,7 @@ def _chart_function(spec: ChartSpec, flavour: str) -> list[str]:
 
 
 _CAP_HELPER = [
-    "def cap_categories(frame, column, limit, measure=None):",
+    "def cap_categories(frame, column, limit, measure=None, agg=None):",
     f'    """Keep the `limit` largest categories; group the rest as {OTHER_LABEL!r}, as PlotaViz',
     '    does on screen. Numeric and date columns are left alone."""',
     "    values = frame[column]",
@@ -195,8 +195,10 @@ _CAP_HELPER = [
     "        return frame",
     "    if values.nunique() <= limit:",
     "        return frame",
-    "    if measure in frame.columns and types.is_numeric_dtype(frame[measure]):",
-    "        ranking = frame.groupby(column, observed=True)[measure].sum().nlargest(limit)",
+    "    usable = measure in frame.columns and types.is_numeric_dtype(frame[measure])",
+    "    if usable and agg != 'count':",
+    "        grouped = frame.groupby(column, observed=True)[measure]",
+    "        ranking = grouped.agg(agg or 'sum').nlargest(limit)",
     "    else:",
     "        ranking = values.value_counts().nlargest(limit)",
     "    frame = frame.copy()",
@@ -239,10 +241,13 @@ def _prepare_lines(spec: ChartSpec, eff: ChartSpec) -> list[str]:
 
     cap = int(spec.options.get("top_n") or MAX_CATEGORIES)
     if spec.x:
-        lines.append(f"plot_df = cap_categories(plot_df, {spec.x!r}, {cap}, {spec.y!r})")
+        lines.append(
+            f"plot_df = cap_categories(plot_df, {spec.x!r}, {cap}, {spec.y!r}, {spec.agg!r})"
+        )
     if spec.color:
         lines.append(
-            f"plot_df = cap_categories(plot_df, {spec.color!r}, {min(cap, 12)}, {spec.y!r})"
+            f"plot_df = cap_categories(plot_df, {spec.color!r}, {min(cap, 12)}, {spec.y!r}, "
+            f"{spec.agg!r})"
         )
 
     if spec.agg:

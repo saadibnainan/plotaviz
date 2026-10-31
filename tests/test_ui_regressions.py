@@ -7,11 +7,11 @@ redirected to a temporary directory so the tests never read or write the develop
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
 from pathlib import Path
 
 import pandas as pd
 import pytest
+from conftest import open_and_wait, wait_idle
 from PySide6.QtCore import QDate, QSettings
 from PySide6.QtWidgets import QMessageBox
 
@@ -24,43 +24,6 @@ from plotaviz.ui.main_window import MainWindow, _same_chart
 from plotaviz.ui.settings_dialog import SettingsDialog
 from plotaviz.ui.type_override import TypeOverridePanel
 from plotaviz.ui.workers import TaskRunner
-
-LOAD_TIMEOUT_MS = 30_000
-
-
-@pytest.fixture
-def settings(tmp_path: Path) -> QSettings:
-    """App settings stored under ``tmp_path``, with the static renderer forced on."""
-    QSettings.setPath(
-        QSettings.Format.NativeFormat, QSettings.Scope.UserScope, str(tmp_path / "config")
-    )
-    store = QSettings("plotaviz", "plotaviz")
-    store.clear()
-    store.setValue("performance/prefer_static", True)
-    store.sync()
-    return store
-
-
-@pytest.fixture
-def window(qtbot, settings: QSettings) -> Iterator[MainWindow]:
-    win = MainWindow()
-    qtbot.addWidget(win)
-    yield win
-    win.runner.cancel()
-    win.runner.wait()
-
-
-def wait_idle(qtbot, win: MainWindow) -> None:
-    """Block until the worker thread has fully stopped and its callbacks have run."""
-    qtbot.waitUntil(lambda: win.runner._thread is None, timeout=LOAD_TIMEOUT_MS)
-
-
-def open_and_wait(qtbot, win: MainWindow, path: Path) -> None:
-    wait_idle(qtbot, win)
-    win.open_path(path)
-    wait_idle(qtbot, win)
-    assert win.analysis is not None
-
 
 # ---------------------------------------------------------------------------- filter panel
 

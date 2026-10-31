@@ -118,7 +118,7 @@ def export_html(df: pd.DataFrame, spec: ChartSpec, path: str | Path) -> Path:
     """Write the interactive Plotly figure as a self-contained HTML file.
 
     Useful for sharing a chart someone can actually zoom and hover, without them installing
-    anything.
+    anything — or having internet access, since plotly.js is embedded.
 
     Raises:
         ExportError: If Plotly is missing or the file cannot be written.
@@ -129,7 +129,8 @@ def export_html(df: pd.DataFrame, spec: ChartSpec, path: str | Path) -> Path:
     figure = build_plotly(df, spec)
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        figure.write_html(str(target), include_plotlyjs="cdn", full_html=True)
+        # Embed plotly.js (~4 MB) so the page works offline, like the rest of PlotaViz.
+        figure.write_html(str(target), include_plotlyjs=True, full_html=True)
     except OSError as exc:
         raise ExportError(f"Could not write {target}.", hint=str(exc)) from exc
     return target

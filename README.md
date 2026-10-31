@@ -262,8 +262,8 @@ Hosted providers: Anthropic (Claude), OpenAI, and Google Gemini. Install with
   pipeline steps, so they serialize into sessions and generated code for free.
 - **Charts** — 15 types, interactive via Plotly in a WebEngine view, with a matplotlib canvas
   fallback when WebEngine is unavailable.
-- **Export** — PNG, SVG, PDF, JPEG, WebP at up to 1200 DPI; interactive HTML (loads plotly.js
-  from a CDN when opened); or a standalone Python script in matplotlib or Plotly flavour.
+- **Export** — PNG, SVG, PDF, JPEG, WebP at up to 1200 DPI; self-contained interactive HTML
+  (plotly.js embedded, works offline); or a standalone Python script in matplotlib or Plotly flavour.
 - **Sessions** — `.pviz` files store the recipe, not the data, and warn if the source changed.
 - **Guardrails** — automatic downsampling with a visible notice, top-N category capping,
   virtualized preview, debounced re-render.

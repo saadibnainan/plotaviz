@@ -221,11 +221,12 @@ def matrix_columns(df: pd.DataFrame, spec: ChartSpec) -> list[str]:
 def _cap_categories(
     df: pd.DataFrame, column: str, limit: int, spec: ChartSpec
 ) -> tuple[pd.DataFrame, int]:
-    """Keep the ``limit`` largest categories in ``column``; bucket the rest as "Other"."""
-    if spec.y and spec.y in df.columns and pd.api.types.is_numeric_dtype(df[spec.y]):
-        ranking = df.groupby(column, observed=True)[spec.y].sum().nlargest(limit)
-    else:
-        ranking = df[column].value_counts().nlargest(limit)
+    """Keep the ``limit`` largest categories in ``column``; bucket the rest as "Other".
+
+    Categories are ranked by the same aggregation the chart shows — the top 30 by *mean* for a
+    mean chart, not by sum, which favours whichever categories simply have the most rows.
+    """
+    ranking = _category_ranking(df, column, spec.y, spec.agg).nlargest(limit)
     keep = set(ranking.index)
     out = df.copy()
     mask = ~out[column].isin(keep)
@@ -234,6 +235,20 @@ def _cap_categories(
     # outside its categories, so writing "Other" into it raised instead of bucketing.
     out[column] = out[column].astype(object).where(~mask, OTHER_LABEL)
     return out, dropped
+
+
+def _category_ranking(
+    df: pd.DataFrame, column: str, measure: str | None, agg: str | None
+) -> pd.Series:
+    """Score each category of ``column`` by the chart's aggregation of ``measure``."""
+    if (
+        measure is None
+        or measure not in df.columns
+        or not pd.api.types.is_numeric_dtype(df[measure])
+        or agg == "count"
+    ):
+        return df[column].value_counts()
+    return df.groupby(column, observed=True)[measure].agg(agg or "sum")
 
 
 def group_keys(*columns: str | None, available: list[str] | None = None) -> list[str]:

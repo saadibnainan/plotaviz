@@ -222,6 +222,69 @@ class FilterPanel(QWidget):
 
     # ------------------------------------------------------------------ filter building
 
+    def set_filters(self, steps: list[Step]) -> None:
+        """Show existing filter steps in the widgets without emitting anything.
+
+        Used when a session is restored and after undo/redo, so the panel describes the filters
+        that are actually applied instead of looking empty.
+        """
+        widgets: list[QWidget] = [self.query_edit]
+        widgets += [w for pair in self._numeric.values() for w in pair]
+        widgets += [w for pair in self._datetime.values() for w in pair]
+        widgets += [*self._categorical.values(), *self._boolean.values()]
+        for widget in widgets:
+            widget.blockSignals(True)
+        try:
+            self._reset_widgets()
+            for step in steps:
+                self._show_step(step)
+        finally:
+            for widget in widgets:
+                widget.blockSignals(False)
+        self._last_emitted = [step.to_dict() for step in self.filters()]
+
+    def _reset_widgets(self) -> None:
+        """Put every widget back to "no filter" without emitting."""
+        self.query_edit.clear()
+        for name, (low, high) in self._numeric.items():
+            stats = getattr(self._profile.columns.get(name) if self._profile else None, "stats", {})
+            low.setValue(float((stats or {}).get("min", low.minimum())))
+            high.setValue(float((stats or {}).get("max", high.maximum())))
+        for name, (start, end) in self._datetime.items():
+            first, last = self._date_bounds[name]
+            start.setDate(first)
+            end.setDate(last)
+        for listing in self._categorical.values():
+            listing.selectAll()
+        for check in self._boolean.values():
+            check.setChecked(False)
+
+    def _show_step(self, step: Step) -> None:
+        """Reflect one filter step in its widget, if the panel has one for it."""
+        if isinstance(step, QueryFilter):
+            joined = " and ".join(t for t in (self.query_edit.text(), step.expression) if t)
+            self.query_edit.setText(joined)
+            return
+        if not isinstance(step, ColumnFilter):
+            return
+        name = step.column
+        if step.op == "between" and name in self._numeric:
+            low, high = self._numeric[name]
+            low.setValue(float(step.value[0]))
+            high.setValue(float(step.value[1]))
+        elif step.op == "between" and name in self._datetime:
+            start, end = self._datetime[name]
+            start.setDate(QDate.fromString(str(step.value[0])[:10], "yyyy-MM-dd"))
+            end.setDate(QDate.fromString(str(step.value[1])[:10], "yyyy-MM-dd"))
+        elif step.op == "in" and name in self._boolean:
+            self._boolean[name].setChecked(list(step.value) == [True])
+        elif step.op == "in" and name in self._categorical:
+            allowed = list(step.value)
+            listing = self._categorical[name]
+            for row in range(listing.count()):
+                item = listing.item(row)
+                item.setSelected(item.data(0x0100) in allowed)
+
     def filters(self) -> list[Step]:
         """Build the current filter steps.
 
