@@ -7,8 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Fixes from the full-stack and QA audit — see [docs/AUDIT.md](docs/AUDIT.md) for the details and
-the open recommendations.
+Fixes from the full-stack and QA audit, and the first features it recommended — see
+[docs/AUDIT.md](docs/AUDIT.md) for the details and the open recommendations.
+
+### Added
+
+- **Chart builder without an LLM**: the chart/x/y/colour/aggregation row is always available.
+- **File → Open with options…**: delimiter, encoding, decimal mark, thousands separator, header
+  line, and Excel sheet — saved in sessions and replayed by generated scripts.
+- **Cleaning tab**: missing values, outliers (off/flag/drop, method, threshold), duplicate
+  removal, and the full step list with "Remove step".
+- **Edit → Undo / Redo** for filters, type overrides, cleaning, and removed steps.
+- **Customize** panel: title, axis labels, log scales, category limit, sort order, histogram
+  bins, and a colour-blind-safe (Okabe–Ito) palette — honoured by sessions and generated code.
+
+### Changed
+
+- **Missing values are no longer filled by default** (GUI, Python API, and CLI `--missing`
+  default `keep`). Choose a strategy in the Cleaning tab or with `--missing median` etc.
+- HTML export embeds plotly.js, so exported pages work offline.
+- `plotaviz data.csv --export out.png` (and other output flags) run headless.
+- "Other" categories are ranked by the charted aggregation; a log axis is only suggested for
+  positive data; pandas is bounded below 4; LLM model suggestions refreshed.
 
 ### Fixed
 
@@ -35,6 +55,10 @@ the open recommendations.
   encoding, and decimal format.
 - Export asks before replacing an existing file.
 - JSON "object of arrays" files load as a table; the `.xls` error names `xlrd`.
+- Restored sessions show their filters in the filter widgets and restore the active tab; a session
+  whose filters match nothing in changed data still opens (without them).
+- Decimal-comma detection no longer turns dotted dates into integers or reads US `1,250` as 1.25.
+- Static chart re-renders no longer leak matplotlib figures.
 
 - Static (matplotlib) view no longer stacks an extra navigation toolbar above the chart on
   every re-render.

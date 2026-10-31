@@ -127,11 +127,16 @@ plotaviz                                  # open the app
 plotaviz samples/sales_timeseries.csv     # open the app with a file
 ```
 
-1. Drag a dataset in, or use **File → Open**.
-2. Read the **cleaning report** — what was renamed, filled, deduplicated, flagged.
+1. Drag a dataset in, or use **File → Open**. For a semicolon file, a non-UTF-8 export, a title
+   row above the header, or a specific Excel sheet, use **File → Open with options…**.
+2. Read the **cleaning report** — what was renamed, deduplicated, flagged. Change how rows are
+   cleaned in the **Cleaning** tab; missing values are left alone unless you choose otherwise.
 3. Check the **Types** tab and correct anything inference got wrong.
-4. Pick a chart from **Charts**. The reasoning for each is right there.
+4. Pick a chart from **Charts** — the reasoning for each is right there — or build one in the
+   chart row above it (works offline). Adjust title, labels, scales, and colours under
+   **Customize**.
 5. Narrow the data in **Filters** — per-column widgets, or a raw pandas query.
+   **Edit → Undo** reverts any filter, type, or cleaning change.
 6. **File → Export** for the image, the interactive HTML, or the Python script.
 7. **File → Save session** writes a `.pviz` file that restores all of it later.
 
@@ -252,11 +257,14 @@ Hosted providers: Anthropic (Claude), OpenAI, and Google Gemini. Install with
 
 ## Features
 
-- **Loading** — CSV, TSV, Excel, JSON, NDJSON, Parquet. Delimiter and encoding sniffing. Files
-  over a configurable threshold read through polars and profile on a sample.
+- **Loading** — CSV, TSV, Excel, JSON, NDJSON, Parquet. Delimiter, encoding, and European
+  decimal-comma detection, with manual import options (delimiter, encoding, decimal/thousands
+  marks, header line, Excel sheet). Files over a configurable threshold read through polars and
+  profile on a sample.
 - **Cleaning** — an ordered, replayable step list: name normalization, type coercion,
   missing-value strategies, IQR/z-score outlier flagging (non-destructive by default),
-  deduplication. Every step reports what it changed.
+  deduplication. Every step reports what it changed; settings and individual steps are editable
+  in the Cleaning tab, and every change can be undone.
 - **Type override** — inferred roles shown and editable before analysis proceeds.
 - **Filters** — range widgets, multi-selects, date ranges, and a raw pandas-query bar. Filters are
   pipeline steps, so they serialize into sessions and generated code for free.
@@ -344,9 +352,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for adding selector rules and LLM provide
 
 ## Roadmap
 
-Designed for, not built yet: auto EDA report export (HTML/PDF), a multi-chart dashboard grid, a
-chart customization panel (titles, palettes, axis scales), undo/redo across the step stack,
-colorblind-safe palettes and OS-following dark mode, and joining two datasets on a key.
+Designed for, not built yet: auto EDA report export (HTML/PDF), a multi-chart dashboard grid,
+OS-following dark mode, and joining two datasets on a key. The full list of open items, with
+reasoning, is in [docs/AUDIT.md](docs/AUDIT.md).
 
 Explicitly out of scope for v1: plugin architecture, localization, real-time streaming, and live
 database connectors.

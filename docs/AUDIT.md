@@ -75,52 +75,53 @@ flavours.
 - `.xls` import error told users to install `openpyxl`; it needs `xlrd`.
 - A `mypy plotaviz/core` error under current pandas-stubs.
 
-## P2 — open, smaller
+## P2 — smaller items
 
-- `performance/max_points` is saved in Settings but never read.
-- `plotaviz data.csv --export out.png` opens the GUI and ignores `--export`; `--dpi`/`--size` are
-  not range-checked.
-- HTML export uses `include_plotlyjs="cdn"`, so it needs internet — the README calls it
-  self-contained and the app offline.
-- Session `view` (renderer, tab, geometry) is saved but never restored; sessions store absolute
-  paths with no "locate file" prompt; large files are hashed twice on session open.
-- Filters restored from a session are applied but not reflected in the filter widgets.
-- `_cap_categories` ranks by sum even when the aggregation is mean.
-- `log_y` is suggested on skew without checking `min > 0`, so zero values vanish.
-- Median imputation is on by default with no "leave as-is" option — it fabricates values in time
-  series. Consider making "leave missing" the default.
-- pandas has no upper bound (pandas 3 is current; the suite passes on 3.1). Hard-coded LLM model
-  lists are stale.
+| Item | Status |
+|---|---|
+| `performance/max_points` saved in Settings but never read | ✅ used by the chart view |
+| `plotaviz data.csv --export out.png` opened the GUI; `--dpi`/`--size` unchecked | ✅ headless with any output flag; range-checked |
+| HTML export needed internet (`include_plotlyjs="cdn"`) | ✅ plotly.js embedded |
+| Session `view` never restored; restored filters not shown in the widgets | ✅ tab + geometry restored; `FilterPanel.set_filters` |
+| Large files hashed twice on session open | ✅ hash reused |
+| "Other" bucket ranked by sum even for mean charts | ✅ ranked by the charted aggregation (app + codegen) |
+| `log_y` suggested for data containing zeros | ✅ only when every value is positive |
+| Median imputation on by default | ✅ default is now **keep** (GUI, `Analysis.from_file`, CLI `--missing`) |
+| pandas unbounded; stale model lists | ✅ `pandas<4`; model suggestions refreshed (Oct 2026); OpenAI uses `max_completion_tokens` |
+| Sessions store absolute paths, no "locate file" prompt | ○ open |
+| "Sample" of large files is the first N rows (P1-14) | ○ open — see *Performance* |
 
-## Performance
+## Features added after the audit
 
-1. Cache the cleaned frame *before* filters; a filter change should replay only the filter steps,
-   not CoerceTypes → Dedupe → FillMissing → FlagOutliers, and should not re-rank unless asked.
-2. Load plotly.js once into a persistent WebEngine page and update via `Plotly.react` instead of
-   writing and loading a ~4 MB HTML file per render.
-3. Build figures off the UI thread (`prepare()` + figure construction are pure).
-4. Replace first-N "sampling" with a random or stratified sample (or push aggregation into polars
-   so charts reflect the full file).
+1. **Chart builder without an LLM** — the chart/x/y/colour/aggregation row is always shown once
+   data is loaded and mirrors the chart on screen.
+2. **Import options** (File → Open with options…) — delimiter, encoding, decimal mark, thousands
+   separator, header line, Excel sheet; stored in the session and replayed by generated code.
+3. **Cleaning tab** — missing values (keep/drop/fill…), outliers (off/flag/drop, IQR or z-score,
+   threshold), duplicate removal, and the full step list with "Remove step".
+4. **Undo/redo** (Edit menu) across filters, type overrides, cleaning, and removed steps.
+5. **Customize panel** — title, axis labels, log scales, category limit, sort order, histogram
+   bins, colour-blind-safe Okabe–Ito palette; honoured by both renderers, sessions, and codegen.
 
-## Feature proposals (ranked by value ÷ effort)
+## Second review (of this branch)
 
-1. **Manual chart builder that works offline.** The editable chart/x/y/colour/agg row already
-   exists in the query bar but is hidden until an LLM answers, so offline users can only pick from
-   ≤8 presets. Show it always.
-2. **Import options dialog** — delimiter, encoding, decimal/thousands, day-first dates, header row,
-   Excel sheet picker. `LoadResult.read_options` (added here) already carries these into codegen.
-3. **Cleaning controls in the GUI** — missing-value strategy (plus "leave as-is"), outliers
-   flag/drop/off, dedupe on/off. These are already `Step` parameters and CLI flags.
-4. **Editable step list with undo/redo** — the pipeline design supports it directly.
-5. **Chart customization** — title, axis labels, log scales, top-N, sort, bins, colour-blind-safe
-   palette, all as `spec.options` so sessions and codegen pick them up for free.
-6. **Session quality-of-life** — relative paths, "locate missing file", unsaved-changes prompt,
-   restore the saved view, reflect restored filters in the widgets.
-7. **LLM transparency** — "preview what will be sent", a real key check (list models; sends no
-   data), model lists fetched from the provider.
-8. **Preview table** — sort, search, per-column stats panel.
-9. **Roadmap items** — EDA report export, multi-chart dashboard, dataset join, dark mode.
-10. **CLI** — `--rules custom.yaml`, `--sheet`, batch mode over a glob, offline HTML.
+A high-effort code review of `main...HEAD` found ten defects in the changes themselves; all are
+fixed with regression tests in `tests/test_reaudit.py`:
+
+- The decimal-comma re-read used `thousands="."`, which pandas applies to *every* field — day-first
+  dates like `01.05.2024` became integers. Thousands grouping is now skipped (with a note) when the
+  file has dotted dates.
+- `1,250` / `12,000` in a TSV (US thousands) were read as 1.25 / 12.0. Columns whose every value
+  has exactly three digits after the comma are now treated as ambiguous and left as text.
+- The re-read dropped user options (header row); a large file opened with options was read in full.
+- One-slot replay queue: a queued type override was discarded by a later filter edit. The queue
+  now keeps different kinds of change and merges only repeats of the same kind.
+- Chart choices and customization could race a replay on the worker; they now wait for it.
+- A session whose filters match nothing in changed data could not be opened; it now opens without
+  them, with a warning.
+- Numeric filters emitted rounded bounds for the untouched side; generated date filters failed on
+  timezone-aware columns; matrix charts kept stale pinned columns after a type change.
+- Also found: every static re-render leaked a matplotlib figure.
 
 ## Test coverage
 
@@ -132,3 +133,5 @@ directory. Remaining gaps worth closing:
 - CI runs generated code only for the iris sample; run it for every chart type × flavour and
   compare the plotted rows with `prepare()` (the new tests do this for the drift cases).
 - No test exercises the polars large-file path with real sampling.
+- Features and the second review add `tests/test_features.py`, `tests/test_small_fixes.py`, and
+  `tests/test_reaudit.py`; the suite is now 469 tests.
