@@ -42,13 +42,13 @@ flavours.
 | # | Defect | Where | Evidence | Status |
 |---|---|---|---|---|
 | 7 | **A rejected filter poisoned the pipeline.** `replace_filters()` mutated before `rerun()` raised, with no rollback; the empty result was also already assigned. Every later replay and the saved session inherited it. | `core/analysis.py` | Repro | ✅ full rollback; "No rows match the current filters." instead of a profiler error |
-| 8 | **Filter changes ran the whole pipeline + profile + ranking on the UI thread**, and every render rewrites/reloads ~4 MB of HTML embedding plotly.js. | `ui/main_window.py`, `ui/interactive_view.py` | Code | ◐ replays now run on the worker and are queued, not dropped, when busy. Rendering is still on the UI thread; see *Performance* below |
+| 8 | **Filter changes ran the whole pipeline + profile + ranking on the UI thread**, and every render rewrites/reloads ~4 MB of HTML embedding plotly.js. | `ui/main_window.py`, `ui/interactive_view.py` | Code | ✅ replays run on the worker; filters reuse a cached cleaned frame (1M rows: ≈2.0 s → 0.45 s); charts and tiles are built off the UI thread; the interactive page updates with `Plotly.react` instead of reloading|
 | 9 | **Categorical filter listed only the top 10 values**; deselecting one silently dropped every unlisted category. Columns with >200 values get no filter (the promised search box does not exist). | `ui/filter_panel.py`, `core/profiler.py` | Code | ◐ all values up to 200 are listed; >200 still open |
 | 10 | **"Other" bucketing crashed on `category` dtype** (what Parquet/polars return): `Cannot setitem on a Categorical with a new category`. | `core/plotter.py` | Repro | ✅ |
 | 11 | **Generated code drifted from the app**: dates parsed without `format="mixed"` (3/3 vs 1/3 parsed on mixed input); boolean coercion `astype('boolean')` crashed on yes/no; `dropna()` also dropped colour-NaN rows; top-30 + "Other" capping absent; `FillMissing` ignored `columns`; non-UTF-8 and `;`-delimited decimal-comma files were re-read with defaults. | `core/preprocess.py`, `core/codegen.py`, `core/loader.py` | Repro | ✅ (the matplotlib treemap layout still differs from the app's) |
 | 12 | **Type "Reset to detected" did not undo the coercion**, and after a session restore a previous override counted as "detected" and was dropped on the next Apply. | `ui/main_window.py`, `ui/type_override.py` | Repro | ✅ `Analysis.inferred_types` + `set_type_overrides()` |
 | 13 | **Correlation heatmap / pair plot included identifier columns** (`order_id`); renderers disagreed (6 vs 5 pair-plot columns). | `core/plotter.py`, `core/selector.py` | Repro | ✅ measure columns pinned in the spec |
-| 14 | **"Sample" of large files is the first N rows**, so a time-sorted file shows only its earliest period; JSON/Excel have no size guard. | `core/loader.py` | Code | ○ |
+| 14 | **"Sample" of large files is the first N rows**, so a time-sorted file shows only its earliest period; JSON/Excel have no size guard. | `core/loader.py` | Code | ✅ uniform seeded random sample for CSV/Parquet/NDJSON; large Excel/JSON say they were loaded in full |
 | 15 | **Export silently overwrote files.** Default code-export path for `sales.csv` is `sales.py` beside it — plausibly the user's own script. | `ui/export_dialog.py` | Code | ✅ confirmation before replacing |
 
 ## Security and privacy
@@ -88,8 +88,8 @@ flavours.
 | `log_y` suggested for data containing zeros | ✅ only when every value is positive |
 | Median imputation on by default | ✅ default is now **keep** (GUI, `Analysis.from_file`, CLI `--missing`) |
 | pandas unbounded; stale model lists | ✅ `pandas<4`; model suggestions refreshed (Oct 2026); OpenAI uses `max_completion_tokens` |
-| Sessions store absolute paths, no "locate file" prompt | ○ open |
-| "Sample" of large files is the first N rows (P1-14) | ○ open — see *Performance* |
+| Sessions store absolute paths, no "locate file" prompt | ✅ relative path stored; moved projects found; **Locate file…** |
+| "Sample" of large files is the first N rows (P1-14) | ✅ random sample (see P1-14) |
 
 ## Features added after the audit
 
@@ -126,31 +126,39 @@ fixed with regression tests in `tests/test_reaudit.py`:
   timezone-aware columns; matrix charts kept stale pinned columns after a type change.
 - Also found: every static re-render leaked a matplotlib figure.
 
-## Performance
+## Performance (done)
 
-1. Cache the cleaned frame *before* filters; a filter change should replay only the filter steps,
-   not CoerceTypes → Dedupe → FillMissing → FlagOutliers, and should not re-rank unless asked.
-2. Load plotly.js once into a persistent WebEngine page and update via `Plotly.react` instead of
-   writing and loading a ~4 MB HTML file per render.
-3. Build figures off the UI thread (`prepare()` + figure construction are pure).
-4. Replace first-N "sampling" with a random or stratified sample (or push aggregation into polars
-   so charts reflect the full file).
+Measured on a generated 1,000,000-row CSV:
 
-## Remaining feature proposals (ranked by value ÷ effort)
+| Change | Before | After |
+|---|---|---|
+| A filter change replays only the filters on a cached cleaned frame (skipped above 1.5 GB) | ≈2.0 s | ≈0.45 s |
+| The interactive chart loads plotly.js once and updates with `Plotly.react` | ≈4 MB page reload per chart | 1 load, then in-place updates (verified in headless Chromium) |
+| Charts, dashboard tiles, and preview sort/search are built on workers, newest request wins | on the UI thread | off it |
+| Large files are sampled uniformly at random (seeded, file order) | first 200k rows: the first ~139 days of a time-sorted file | rows spread over the whole file |
 
-Done since the audit: the offline chart builder, import options, cleaning controls, undo/redo,
-chart customization (see above), and a **multi-chart dashboard** (pinned tiles, exported as one
-grid image/PDF, HTML page, or script). Still open:
+## Everything after the audit, by batch
 
-1. **Session quality-of-life** — relative paths and a "locate missing file" prompt (sessions
-   still store absolute paths), and an unsaved-changes prompt on close.
-2. **LLM transparency** — "preview what will be sent", a real key check (list models; sends no
-   data), model lists fetched from the provider.
-3. **Preview table** — sort, search, per-column stats panel.
-4. **Small multiples** — one chart split into a panel per category (a facet grid), for when a
-   colour split has too many series to read.
-5. **Roadmap items** — EDA report export, dataset join, OS-following dark mode.
-6. **CLI** — `--rules custom.yaml`, `--sheet`, batch mode over a glob.
+All of the original proposals are now implemented:
+
+- **Phase 2:** offline chart builder, import options, cleaning controls, undo/redo, chart
+  customization, multi-chart dashboard.
+- **Batch 1:** the performance items above; portable sessions and **Locate file…**; an
+  unsaved-changes prompt; LLM **Preview what will be sent** and a real key check (lists models,
+  sends no data).
+- **Batch 2:** preview sort over the whole frame, search, and column statistics; dark mode
+  (system/light/dark; exports stay light); one panel per category (`options["facet"]`) in every
+  renderer and in generated code.
+- **Batch 3:** the analysis report (HTML/PDF); joining a second dataset as a replayable step;
+  Excel "all sheets, stacked"; CLI `--rules`, `--sheet`, `--report`, and batch mode.
+
+Each batch had its own high-effort review pass; every confirmed finding was fixed with a
+regression test (`tests/test_batch1.py`, `test_batch2.py`, `test_batch3.py`).
+
+Still open, deliberately: interactive (Plotly) dashboard tiles — static tiles keep the dashboard
+fast, and **Open** shows any tile interactively; joining on columns whose names differ between
+files (rename one column first); and sampling for large Excel/plain-JSON files, which cannot be
+sampled while reading.
 
 ## Test coverage
 
@@ -162,6 +170,7 @@ directory. Remaining gaps worth closing:
 - CI runs generated code only for the iris sample; run it for every chart type × flavour and
   compare the plotted rows with `prepare()` (the new tests do this for the drift cases).
 - No test exercises the polars large-file path with real sampling.
-- Features, the dashboard, and the second review add `tests/test_features.py`,
-  `tests/test_small_fixes.py`, `tests/test_reaudit.py`, and `tests/test_dashboard.py`; the suite
-  is now 502 tests.
+- Features, the dashboard, the reviews, and batches 1–3 add `tests/test_features.py`,
+  `test_small_fixes.py`, `test_reaudit.py`, `test_dashboard.py`, and `test_batch1.py`–`3.py`;
+  the suite is now 587 tests.
+- The polars large-file path is now covered (`tests/test_batch1.py::TestSampling`).

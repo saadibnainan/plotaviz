@@ -11,10 +11,12 @@ anyone wants; the view shows the first :data:`MAX_PREVIEW_ROWS` and says so.
 
 from __future__ import annotations
 
+import html
+from collections.abc import Callable
 from typing import Any
 
 import pandas as pd
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QObject, Qt
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QObject, Qt, Signal
 
 from ..core.profiler import DatasetProfile
 
@@ -31,6 +33,95 @@ _ROLE_COLOURS = {
 }
 
 
+def _is_missing(value: Any) -> bool:
+    """``pd.isna`` for one cell. Lists and dicts (nested JSON) are values, never missing —
+    ``pd.isna`` on them returns an array, which used to raise while painting the table."""
+    if isinstance(value, (list, tuple, dict, set)):
+        return False
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):  # array-like cells (Parquet/Arrow lists) are values
+        return False
+
+
+def arrange_frame(
+    df: pd.DataFrame, sort_column: str | None, ascending: bool, search: str
+) -> pd.DataFrame:
+    """Search and sort the *whole* frame — not just the rows the preview shows.
+
+    Pure and Qt-free, so the window can run it on a worker for large data.
+
+    Args:
+        df: The cleaned, filtered frame.
+        sort_column: Column to sort by, or ``None``.
+        ascending: Sort direction.
+        search: Case-insensitive text; rows where any cell contains it are kept.
+    """
+    out = df
+    if search:
+        mask = pd.Series(False, index=out.index)
+        for column in out.columns:
+            mask |= (
+                out[column]
+                .astype("string")
+                .str.contains(search, case=False, regex=False, na=False)
+                .astype(bool)
+            )
+        out = out.loc[mask]
+    if sort_column is not None and sort_column in out.columns:
+        try:
+            out = out.sort_values(
+                sort_column, ascending=ascending, na_position="last", kind="stable"
+            )
+        except TypeError:
+            # A text column holding numbers too ("x", 1, …) cannot be compared: sort as text.
+            out = out.sort_values(
+                sort_column,
+                ascending=ascending,
+                na_position="last",
+                kind="stable",
+                key=lambda s: s.astype("string"),
+            )
+    return out
+
+
+def column_summary_html(prof: Any) -> str:
+    """A short HTML summary of one column's profile, for the stats panel."""
+    rows = [
+        ("Type", prof.role + (" (identifier)" if prof.is_identifier else "")),
+        ("Distinct values", f"{prof.n_unique:,}"),
+        ("Missing", f"{prof.n_missing:,} ({prof.pct_missing:.1f}%)"),
+    ]
+    for key in ("min", "max", "mean", "median", "std", "span_days"):
+        if key in prof.stats:
+            value = prof.stats[key]
+            rows.append((key, f"{value:,.4g}" if isinstance(value, float) else str(value)))
+    body = "".join(
+        f"<tr><td style='color:gray;padding-right:8px'>{html.escape(k)}</td>"
+        f"<td>{html.escape(str(v))}</td></tr>"
+        for k, v in rows
+    )
+    top = ""
+    if prof.top_values:
+        items = "".join(
+            f"<li>{html.escape(str(value))} <span style='color:gray'>({count:,})</span></li>"
+            for value, count in prof.top_values[:8]
+        )
+        top = f"<p style='margin:4px 0 0 0'>Most frequent:</p><ul style='margin:0'>{items}</ul>"
+    note = f"<p style='color:gray'>{html.escape(prof.note)}</p>" if prof.note else ""
+    return f"<b>{html.escape(prof.name)}</b><table>{body}</table>{top}{note}"
+
+
+#: The same tints, lightened to stay readable on a dark background.
+_ROLE_COLOURS_DARK = {
+    "numeric": "#7FB2E5",
+    "categorical": "#C3A3E8",
+    "datetime": "#6FD0A8",
+    "boolean": "#E8B26F",
+    "text": "#B0B0B0",
+}
+
+
 class DataFrameModel(QAbstractTableModel):
     """Exposes a pandas DataFrame to a ``QTableView`` without copying it.
 
@@ -40,6 +131,9 @@ class DataFrameModel(QAbstractTableModel):
         parent: Parent object.
     """
 
+    #: The displayed rows changed (a new frame, a sort, or a search).
+    view_changed = Signal()
+
     def __init__(
         self,
         df: pd.DataFrame | None = None,
@@ -48,18 +142,77 @@ class DataFrameModel(QAbstractTableModel):
     ) -> None:
         super().__init__(parent)
         self._df = df if df is not None else pd.DataFrame()
+        self._view = self._df
         self._profile = profile
-        self._rows = min(len(self._df), MAX_PREVIEW_ROWS)
+        self._rows = min(len(self._view), MAX_PREVIEW_ROWS)
+        self._sort: tuple[str | None, bool] = (None, True)
+        self._generation = 0
+        self._arranged = True
+        #: Use header tints that read on a dark background.
+        self.dark = False
+        self._search = ""
+        #: How to run :func:`arrange_frame`: ``scheduler(work, done)``. The window sets one that
+        #: uses a worker thread; without it the work runs inline.
+        self.scheduler: (
+            Callable[[Callable[[], pd.DataFrame], Callable[[pd.DataFrame], None]], None] | None
+        ) = None
 
     # ------------------------------------------------------------------ data access
 
     def set_frame(self, df: pd.DataFrame, profile: DatasetProfile | None = None) -> None:
-        """Swap in a new frame and repaint."""
-        self.beginResetModel()
+        """Swap in a new frame and repaint, keeping the current sort and search.
+
+        The new frame is shown at once (unsorted) so headers and cells always come from the
+        same frame; the sorted/searched view replaces it when the worker finishes.
+        """
         self._df = df
         self._profile = profile
-        self._rows = min(len(df), MAX_PREVIEW_ROWS)
+        self._set_view(df, arranged=self._sort[0] is None and not self._search)
+        self._arrange()
+
+    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
+        """Sort the whole frame by a column (called by the view on a header click)."""
+        if not 0 <= column < len(self._df.columns):
+            return
+        self._sort = (str(self._df.columns[column]), order == Qt.SortOrder.AscendingOrder)
+        self._arrange()
+
+    def set_search(self, text: str) -> None:
+        """Show only rows where some cell contains ``text`` (case-insensitive)."""
+        self._search = text.strip()
+        self._arrange()
+
+    def _arrange(self) -> None:
+        # Every request gets a generation; a result computed for an older request (an old
+        # search still running when the box was cleared, or the previous dataset's) is dropped.
+        self._generation += 1
+        generation = self._generation
+        column, ascending = self._sort
+        if column is None and not self._search:
+            self._set_view(self._df)
+            return
+        df, search = self._df, self._search
+
+        def work() -> pd.DataFrame:
+            return arrange_frame(df, column, ascending, search)
+
+        def done(view: pd.DataFrame) -> None:
+            if generation == self._generation:
+                self._set_view(view)
+
+        if self.scheduler is None:
+            done(work())
+        else:
+            self._arranged = False
+            self.scheduler(work, done)
+
+    def _set_view(self, view: pd.DataFrame, *, arranged: bool = True) -> None:
+        self.beginResetModel()
+        self._view = view
+        self._rows = min(len(view), MAX_PREVIEW_ROWS)
+        self._arranged = arranged
         self.endResetModel()
+        self.view_changed.emit()
 
     @property
     def frame(self) -> pd.DataFrame:
@@ -69,11 +222,17 @@ class DataFrameModel(QAbstractTableModel):
     @property
     def truncated(self) -> bool:
         """Whether the view is showing fewer rows than the frame holds."""
-        return len(self._df) > self._rows
+        return len(self._view) > self._rows
 
     def status_text(self) -> str:
         """A line describing what the preview is showing."""
         rows, cols = len(self._df), len(self._df.columns)
+        if not self._arranged:
+            return f"{rows:,} rows × {cols} columns — sorting/searching…"
+        if self._search:
+            matched = len(self._view)
+            shown = f"; previewing the first {self._rows:,}" if self.truncated else ""
+            return f"{matched:,} of {rows:,} rows contain “{self._search}”{shown}"
         if self.truncated:
             return f"Previewing the first {self._rows:,} of {rows:,} rows × {cols} columns"
         return f"{rows:,} rows × {cols} columns"
@@ -98,12 +257,12 @@ class DataFrameModel(QAbstractTableModel):
             return None
 
         row, col = index.row(), index.column()
-        if row >= self._rows or col >= len(self._df.columns):
+        if row >= self._rows or col >= len(self._view.columns):
             return None
 
         if role == Qt.ItemDataRole.DisplayRole:
-            value = self._df.iat[row, col]
-            if pd.isna(value):
+            value = self._view.iat[row, col]
+            if _is_missing(value):
                 return "—"
             if isinstance(value, float):
                 return f"{value:,.4g}"
@@ -114,12 +273,12 @@ class DataFrameModel(QAbstractTableModel):
             return str(value)
 
         if role == Qt.ItemDataRole.TextAlignmentRole:
-            column = self._df.columns[col]
-            if pd.api.types.is_numeric_dtype(self._df[column]):
+            column = self._view.columns[col]
+            if pd.api.types.is_numeric_dtype(self._view[column]):
                 return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        if role == Qt.ItemDataRole.ForegroundRole and pd.isna(self._df.iat[row, col]):
+        if role == Qt.ItemDataRole.ForegroundRole and _is_missing(self._view.iat[row, col]):
             from PySide6.QtGui import QColor
 
             return QColor("#999999")
@@ -153,7 +312,8 @@ class DataFrameModel(QAbstractTableModel):
             if prof:
                 from PySide6.QtGui import QColor
 
-                return QColor(_ROLE_COLOURS.get(prof.role, "#333333"))
+                colours = _ROLE_COLOURS_DARK if self.dark else _ROLE_COLOURS
+                return QColor(colours.get(prof.role, "#888888"))
 
         return None
 

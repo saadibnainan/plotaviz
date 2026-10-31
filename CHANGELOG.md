@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (since the audit-fixes merge)
+
+- **Speed:** filters replay on a cached cleaned frame (1M rows: ≈2.0 s → 0.45 s per change);
+  the interactive chart loads plotly.js once and updates in place with `Plotly.react`; charts,
+  dashboard tiles, and preview sort/search are built on worker threads.
+- **Large files** are sampled uniformly at random (seeded, in file order) instead of keeping the
+  first rows; NDJSON is sampled too; large Excel/JSON say they were loaded in full.
+- **Sessions** find their data after a project folder is moved, and offer **Locate file…** when
+  it is missing. **Unsaved-changes prompt** on close and before opening something else.
+- **LLM transparency:** Preview what will be sent; Check key lists the available models
+  (no data sent) and fills the model list.
+- **Data preview:** sort the whole dataset by any column, search all rows, column statistics.
+- **Dark mode** (View → Theme), following the system by default; exports stay light.
+- **Panels:** split a chart into one panel per category (`options["facet"]`), everywhere
+  including generated code.
+- **Analysis report** (HTML or PDF), from the File menu or `--report`.
+- **Join another dataset** as an undoable, replayable step, with a match-rate preview.
+- **Excel:** "all sheets, stacked" with a `sheet` column (`--sheet '*'`).
+- **CLI:** `--rules`, `--sheet`, `--report`, batch mode over several files or a glob with
+  `--output-dir`; `--export .png` with one input names the file after the input.
+
 Fixes from the full-stack and QA audit, and the first features it recommended — see
 [docs/AUDIT.md](docs/AUDIT.md) for the details and the open recommendations.
 

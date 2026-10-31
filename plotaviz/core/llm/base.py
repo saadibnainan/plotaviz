@@ -164,6 +164,36 @@ class Provider(ABC):
             LLMError: On any transport, auth, or API failure.
         """
 
+    def list_models(self) -> list[str]:
+        """Model IDs this key can use, from the provider's model-listing endpoint.
+
+        Sends **no** data about the dataset — it is the cheapest authenticated call each API
+        offers, which is what makes it a fair key check.
+
+        Raises:
+            LLMError: If the request fails or the key is rejected.
+        """
+        raise LLMError(f"{self.name} does not support listing models.")
+
+    def check_key(self) -> tuple[bool, str, list[str]]:
+        """Verify the key works without sending anything about the data.
+
+        Returns:
+            ``(ok, message, models)`` — ``models`` is the live list when the check succeeded.
+        """
+        try:
+            models = self.list_models()
+        except ProviderNotConfigured as exc:
+            return False, exc.message, []
+        except LLMError as exc:
+            return False, redact(f"{exc.message} {exc.hint or ''}".strip()), []
+        except Exception as exc:  # SDK-specific errors not mapped above
+            return False, redact(f"The check failed: {exc}"), []
+        if not models:
+            return True, "Connected, but no models are available yet.", models
+        shown = ", ".join(models[:5]) + (" …" if len(models) > 5 else "")
+        return True, f"Connected. {len(models)} models available: {shown}", models
+
     # ------------------------------------------------------------------ tasks
 
     def suggest_chart(

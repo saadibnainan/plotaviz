@@ -190,7 +190,7 @@ def load(
     elif suffix in PARQUET_SUFFIXES:
         result = _load_parquet(path, use_polars=use_polars, sample_rows=sample_rows)
     elif suffix in JSON_SUFFIXES:
-        result = _load_json(path)
+        result = _load_json(path, use_polars=use_polars, sample_rows=sample_rows)
     else:
         # Explicit options are a pandas feature set; the polars fast path honours only defaults.
         # A large file opened with options is still capped at `sample_rows`, through pandas.
@@ -200,6 +200,13 @@ def load(
             sample_rows=sample_rows,
             options=options,
             limit_rows=sample_rows if (options and use_polars) else None,
+        )
+
+    if is_large and not result.sampled and suffix in EXCEL_SUFFIXES | {".json"}:
+        result.notes.append(
+            f"{path.name} is large ({size_bytes / 1048576:,.0f} MB) but this format cannot be "
+            "sampled while reading, so it was loaded in full. Converting it to CSV or Parquet "
+            "lets PlotaViz sample it."
         )
 
     if result.df.empty:
@@ -248,6 +255,21 @@ def _load_csv(
     extra: dict[str, Any] = {
         key: options[key] for key in ("decimal", "thousands", "header") if key in options
     }
+    # A large file opened with explicit options goes through pandas; sample it at random by
+    # skipping lines, so the rows kept are spread over the whole file, not its first N. The
+    # whole file is still tokenized — unavoidable for a uniform sample without polars — but
+    # skipped lines are never materialized. (Measured: the per-line callback costs the same as
+    # a chunked read, ~0.35 s per million lines.)
+    row_kwargs: dict[str, Any] = {}
+    sampled_total: int | None = None
+    if limit_rows is not None:
+        header = extra.get("header", 0)
+        data_start = (header if isinstance(header, int) else -1) + 1
+        data_lines = _count_lines(path) - data_start
+        if data_lines > limit_rows:
+            keep = set((_sample_positions(data_lines, limit_rows) + data_start).tolist())
+            row_kwargs["skiprows"] = lambda i: i >= data_start and i not in keep
+            sampled_total = data_lines
 
     if use_polars:
         try:
@@ -262,17 +284,13 @@ def _load_csv(
             )
             total = int(lazy.select(pl.len()).collect().item())
             if total > sample_rows:
-                frame = lazy.head(sample_rows).collect()
                 return LoadResult(
-                    df=frame.to_pandas(),
+                    df=_polars_sample(lazy, total, sample_rows).to_pandas(),
                     path=path,
                     engine="polars",
                     total_rows=total,
                     sampled=True,
-                    notes=[
-                        f"Large file — loaded the first {sample_rows:,} of {total:,} rows. "
-                        "Statistics and charts are computed on this sample."
-                    ],
+                    notes=[_sample_note(sample_rows, total)],
                 )
             return LoadResult(
                 df=lazy.collect().to_pandas(), path=path, engine="polars", total_rows=total
@@ -294,7 +312,7 @@ def _load_csv(
                 sep=delimiter,
                 encoding=encoding,
                 low_memory=False,
-                nrows=limit_rows,
+                **row_kwargs,
                 **extra,
             )
         except UnicodeDecodeError as exc:
@@ -331,7 +349,7 @@ def _load_csv(
                     sep=delimiter,
                     encoding=encoding,
                     low_memory=False,
-                    nrows=limit_rows,
+                    **row_kwargs,
                     **reread,
                 )
             except (pd.errors.ParserError, ValueError):
@@ -344,18 +362,53 @@ def _load_csv(
                 notes.append(f"Numbers use {mark} (European format); read them as numbers.")
 
         result = LoadResult(df=df, path=path, engine="pandas", notes=notes, read_options=used)
-        if limit_rows is not None and len(df) >= limit_rows:
-            result.total_rows = max(_count_lines(path) - 1, len(df))
-            result.sampled = result.total_rows > len(df)
-            notes.append(
-                f"Large file — loaded the first {len(df):,} of about {result.total_rows:,} rows. "
-                "Statistics and charts are computed on this sample."
-            )
+        if sampled_total is not None:
+            result.total_rows = sampled_total
+            result.sampled = True
+            notes.append(_sample_note(len(df), sampled_total))
         return result
 
     raise LoadError(
         f"Could not decode {path.name} with any supported encoding.",
         hint=f"Tried UTF-8, {', '.join(_ENCODING_FALLBACKS)}. Underlying error: {last_error}",
+    )
+
+
+#: Seed for row sampling, so the same file always yields the same sample (and session replays,
+#: exports, and recommendations stay stable).
+SAMPLE_SEED = 0
+
+
+def _sample_positions(total: int, size: int) -> Any:
+    """``size`` distinct row positions out of ``total``, uniformly at random, in file order."""
+    import numpy as np
+
+    rng = np.random.default_rng(SAMPLE_SEED)
+    return np.sort(rng.choice(total, size=size, replace=False))
+
+
+def _polars_sample(lazy: Any, total: int, size: int) -> Any:
+    """Collect a uniform random sample of ``size`` rows from a lazy polars frame.
+
+    The old approach, ``head(size)``, kept only the start of the file — for a time-sorted file
+    that is the earliest period, not a sample. Rows keep their original order.
+    """
+    import polars as pl
+
+    positions = pl.Series(_sample_positions(total, size)).cast(pl.UInt32)
+    return (
+        lazy.with_row_index("__pv_row")
+        .filter(pl.col("__pv_row").is_in(positions.implode()))
+        .drop("__pv_row")
+        .collect()
+    )
+
+
+def _sample_note(kept: int, total: int) -> str:
+    return (
+        f"Large file — loaded a random sample of {kept:,} of {total:,} rows (spread over the "
+        "whole file, in file order). Statistics and charts are computed on this sample; "
+        "exported code reads the full file."
     )
 
 
@@ -430,6 +483,8 @@ def _load_excel(path: Path, *, sheet: str | int | None) -> LoadResult:
         raise LoadError(f"Could not open {path.name}.", hint=str(exc)) from exc
 
     target = sheet if sheet is not None else 0
+    if target == ALL_SHEETS:
+        return _load_all_sheets(path, book)
     try:
         df = pd.read_excel(book, sheet_name=target)
     except Exception as exc:
@@ -446,9 +501,66 @@ def _load_excel(path: Path, *, sheet: str | int | None) -> LoadResult:
     return LoadResult(df=df, path=path, engine="pandas", notes=notes, read_options=read_options)
 
 
-def _load_json(path: Path) -> LoadResult:
-    """Read JSON or newline-delimited JSON, flattening nested objects one level."""
+#: ``sheet`` value meaning "every sheet, stacked, with a ``sheet`` column".
+ALL_SHEETS = "*"
+
+
+def _load_all_sheets(path: Path, book: Any) -> LoadResult:
+    """Stack every sheet of a workbook into one table, recording each row's sheet.
+
+    For workbooks that split one table across sheets (one per month, per region…).
+    """
+    try:
+        frames = pd.read_excel(book, sheet_name=None)
+        existing = {str(c).lower() for frame in frames.values() for c in frame.columns}
+        column = next(
+            name for name in ("sheet", "source_sheet", "sheet_name_") if name not in existing
+        )
+        df = pd.concat(frames, names=[column, None]).reset_index(level=0)
+        df = df.reset_index(drop=True)
+    except Exception as exc:
+        raise LoadError(
+            f"Could not stack the sheets of {path.name}.",
+            hint=f"Open one sheet at a time instead. Underlying error: {exc}",
+        ) from exc
+    return LoadResult(
+        df=df,
+        path=path,
+        engine="pandas",
+        notes=[f"Stacked {len(frames)} sheets into one table; the {column!r} column says which."],
+        read_options={"sheet_name": ALL_SHEETS, "sheet_column": column},
+    )
+
+
+def _load_json(path: Path, *, use_polars: bool = False, sample_rows: int = 0) -> LoadResult:
+    """Read JSON or newline-delimited JSON, flattening nested objects one level.
+
+    Large NDJSON is sampled through polars like CSV. A plain JSON document has to be parsed whole
+    before it can be sampled, so a large one is loaded in full and the user is told so.
+    """
     suffix = path.suffix.lower()
+    if use_polars and suffix in {".ndjson", ".jsonl"}:
+        try:
+            import polars as pl
+
+            lazy = pl.scan_ndjson(path)
+            total = int(lazy.select(pl.len()).collect().item())
+            if total > sample_rows:
+                return LoadResult(
+                    df=_polars_sample(lazy, total, sample_rows).to_pandas(),
+                    path=path,
+                    engine="polars",
+                    total_rows=total,
+                    sampled=True,
+                    notes=[_sample_note(sample_rows, total)],
+                )
+        except ImportError:
+            pass
+        except Exception:
+            # polars is stricter than pandas about NDJSON (a field that is a number in early rows
+            # and text later fails its schema inference). pandas read these files before, so it
+            # still gets the chance to — in full, which is noted below.
+            pass
     try:
         if suffix in {".ndjson", ".jsonl"}:
             df = pd.read_json(path, lines=True)
@@ -503,12 +615,12 @@ def _load_parquet(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResu
             total = int(lazy.select(pl.len()).collect().item())
             if total > sample_rows:
                 return LoadResult(
-                    df=lazy.head(sample_rows).collect().to_pandas(),
+                    df=_polars_sample(lazy, total, sample_rows).to_pandas(),
                     path=path,
                     engine="polars",
                     total_rows=total,
                     sampled=True,
-                    notes=[f"Large file — loaded the first {sample_rows:,} of {total:,} rows."],
+                    notes=[_sample_note(sample_rows, total)],
                 )
             return LoadResult(
                 df=lazy.collect().to_pandas(), path=path, engine="polars", total_rows=total
@@ -550,6 +662,12 @@ def read_code_for(path: str | Path, options: dict[str, Any] | None = None) -> st
         extra = "".join(f", {k}={options[k]!r}" for k in keys if k in options)
         return f"pd.read_csv({literal}{extra})"
     if suffix in EXCEL_SUFFIXES:
+        if options and options.get("sheet_name") == ALL_SHEETS:
+            column = str(options.get("sheet_column", "sheet"))
+            return (
+                f"pd.concat(pd.read_excel({literal}, sheet_name=None), names=[{column!r}, None])"
+                ".reset_index(level=0).reset_index(drop=True)"
+            )
         if options and "sheet_name" in options:
             return f"pd.read_excel({literal}, sheet_name={options['sheet_name']!r})"
         return f"pd.read_excel({literal})"

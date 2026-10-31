@@ -18,6 +18,23 @@ class OpenAIProvider(Provider):
     default_model = "gpt-5.4-mini"
     available_models = ("gpt-5.4-mini", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-6.1-sol")
 
+    def list_models(self) -> list[str]:
+        """Model IDs from ``GET /v1/models``; sends no dataset information."""
+        try:
+            import openai
+        except ImportError as exc:
+            raise LLMError(
+                "The OpenAI provider needs the openai package.",
+                hint='Install it with: pip install "plotaviz[llm]"',
+            ) from exc
+        client = openai.OpenAI(api_key=self.require_key(), timeout=self.timeout)
+        try:
+            return sorted(model.id for model in client.models.list())
+        except openai.AuthenticationError as exc:
+            raise LLMError("OpenAI rejected the API key.") from exc
+        except openai.APIError as exc:
+            raise LLMError("Could not reach OpenAI.", hint=redact(str(exc))) from exc
+
     def complete(self, system: str, user: str, *, timeout: float) -> str:
         """Send one message and return the text of the reply."""
         try:

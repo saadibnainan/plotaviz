@@ -43,7 +43,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "file", nargs="?", help="dataset or .pviz session to open in the GUI", default=None
     )
-    parser.add_argument("-i", "--input", help="dataset to process headlessly")
+    parser.add_argument(
+        "-i",
+        "--input",
+        nargs="+",
+        metavar="FILE",
+        help="dataset(s) to process headlessly; several files or a glob such as 'data/*.csv' "
+        "run in batch mode with --output-dir",
+    )
+    parser.add_argument(
+        "--output-dir",
+        metavar="DIR",
+        help="batch mode: write each file's outputs here, named after the input "
+        "(--export/--report give the extension, e.g. --export .png)",
+    )
+    parser.add_argument("--sheet", help="Excel sheet to read ('*' stacks every sheet)")
+    parser.add_argument("--rules", metavar="YAML", help="use a custom chart rules file")
+    parser.add_argument(
+        "--report", metavar="PATH", help="write the analysis report (.html or .pdf)"
+    )
     parser.add_argument(
         "--auto",
         action="store_true",
@@ -139,11 +157,17 @@ def main(argv: list[str] | None = None) -> int:
         or args.x
         or args.y
         or args.dashboard
+        or args.report
     )
     if not headless:
         return _run_gui(args.file)
     if not 1 <= args.dpi <= 1200:
         parser.error(f"--dpi must be between 1 and 1200 (got {args.dpi})")
+    inputs = _expand_inputs(args.input) if args.input else []
+    if len(inputs) > 1 or (args.input and any(_is_glob(p) for p in args.input)):
+        return _run_batch(inputs, args, parser)
+    args.input = inputs[0] if inputs else None
+    _name_bare_extensions(args)
     return _run_cli(args, parser)
 
 
@@ -180,10 +204,14 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         return 2
 
     try:
+        if args.rules and not Path(args.rules).exists():
+            raise PlotaVizError(f"No rules file at {args.rules}.")
         analysis = Analysis.from_file(
             source,
             missing_strategy=args.missing,
             flag_outliers=not args.no_outlier_flags,
+            options={"sheet": args.sheet} if args.sheet else None,
+            rules_path=args.rules,
         )
 
         if args.query:
@@ -201,7 +229,12 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             return 0
 
         if args.dashboard:
-            return _run_dashboard(analysis, args, parser)
+            code = _run_dashboard(analysis, args, parser)
+            if code == 0 and args.report:
+                from .core.report import export_report
+
+                print(export_report(analysis, args.report))
+            return code
 
         # --- choose a chart
         if args.chart:
@@ -222,7 +255,10 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             prefer = [c for c in (args.x, args.y, args.color) if c]
             if analysis.profile is None:
                 raise PlotaVizError("The dataset could not be profiled.")
-            ranked = ChartSelector().recommend(analysis.profile, prefer_columns=prefer)
+            from .core.selector import load_rules
+
+            rules = load_rules(analysis.rules_path) if analysis.rules_path else None
+            ranked = ChartSelector(rules).recommend(analysis.profile, prefer_columns=prefer)
             analysis.choose(ranked[0])
         elif analysis.spec is None:
             raise PlotaVizError(
@@ -262,6 +298,12 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             print(written)
             wrote_something = True
 
+        if args.report:
+            from .core.report import export_report
+
+            print(export_report(analysis, args.report))
+            wrote_something = True
+
         if not wrote_something:
             _print_recommendations(analysis, as_json=args.json)
 
@@ -289,8 +331,8 @@ def _run_dashboard(
     assert isinstance(analysis, Analysis)
     if not 1 <= args.dashboard <= MAX_TILES:
         parser.error(f"--dashboard must be between 1 and {MAX_TILES} (got {args.dashboard})")
-    if not (args.export or args.export_code):
-        parser.error("--dashboard needs --export and/or --export-code")
+    if not (args.export or args.export_code or args.report):
+        parser.error("--dashboard needs --export, --export-code, and/or --report")
     for spec in analysis.recommendations[: args.dashboard]:
         analysis.pin(spec)
     if not analysis.dashboard:
@@ -322,6 +364,133 @@ def _run_dashboard(
             )
         )
     return 0
+
+
+def _unique_stems(inputs: list[str]) -> dict[str, str]:
+    """An output name per input: its stem, made unique when two inputs share one.
+
+    ``north/sales.csv`` and ``south/sales.csv`` become ``north_sales`` and ``south_sales``;
+    ``q1.csv`` and ``q1.xlsx`` become ``q1_csv`` and ``q1_xlsx`` — so no output overwrites
+    another.
+    """
+    stems = {source: Path(source).stem for source in inputs}
+    counts: dict[str, int] = {}
+    for stem in stems.values():
+        counts[stem] = counts.get(stem, 0) + 1
+    names: dict[str, str] = {}
+    used: set[str] = set()
+    for source, stem in stems.items():
+        path = Path(source)
+        name = stem
+        if counts[stem] > 1:
+            name = f"{path.parent.name}_{stem}" if path.parent.name else stem
+            if name in used:
+                name = f"{stem}_{path.suffix.lstrip('.')}"
+        base, number = name, 2
+        while name in used:
+            name, number = f"{base}_{number}", number + 1
+        used.add(name)
+        names[source] = name
+    return names
+
+
+def _name_bare_extensions(args: argparse.Namespace) -> None:
+    """``--export .png`` (just an extension) means "named after the input", in single-file mode
+    too — it used to write a hidden file literally called ``.png.png``."""
+    source = args.input or args.file
+    if not source:
+        return
+    folder = Path(args.output_dir) if args.output_dir else Path(source).parent
+    stem = Path(source).stem
+    for attr, template in (("export", "{stem}{ext}"), ("report", "{stem}_report{ext}")):
+        value = getattr(args, attr)
+        if value and value.startswith(".") and "/" not in value and "\\" not in value:
+            setattr(args, attr, str(folder / template.format(stem=stem, ext=value)))
+    if args.export_code and Path(args.export_code).name in {".py", "py"}:
+        args.export_code = str(folder / f"{stem}.py")
+
+
+def _is_glob(pattern: str) -> bool:
+    return any(char in pattern for char in "*?[")
+
+
+def _expand_inputs(patterns: list[str]) -> list[str]:
+    """Expand globs (Windows shells do not), keep order, drop duplicates."""
+    import glob
+
+    found: list[str] = []
+    for pattern in patterns:
+        matches = sorted(glob.glob(pattern)) if _is_glob(pattern) else [pattern]
+        found.extend(m for m in matches if m not in found)
+    return found
+
+
+def _run_batch(inputs: list[str], args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Run the same headless job over several files, one output set per file.
+
+    Outputs go to ``--output-dir``, named after each input: ``--export .png`` writes
+    ``<name>.png``, ``--export-code`` writes ``<name>.py``, ``--report .pdf`` writes
+    ``<name>_report.pdf``. One file failing does not stop the rest; the exit code is 1 if any
+    failed.
+    """
+    import copy
+
+    if not inputs:
+        parser.error("no input files matched")
+    if not args.output_dir:
+        parser.error("batch mode (several inputs) needs --output-dir")
+    if args.describe or args.recommend:
+        parser.error("--describe/--recommend take a single --input")
+    if not (args.export or args.export_code or args.report):
+        parser.error("batch mode needs --export, --export-code, and/or --report")
+    out = Path(args.output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    def suffix(value: str | None, default: str) -> str:
+        if not value:
+            return default
+        text = value if value.startswith(".") else Path(value).suffix
+        return text or default
+
+    failures = 0
+    # Check settings that would otherwise fail on the first file — inside the loop their
+    # error would be swallowed by the per-file output capture and stop the whole batch.
+    _parse_size(args.size, parser)
+    if args.dashboard is not None:
+        from .core.analysis import MAX_TILES
+
+        if not 1 <= args.dashboard <= MAX_TILES:
+            parser.error(f"--dashboard must be between 1 and {MAX_TILES} (got {args.dashboard})")
+
+    stems = _unique_stems(inputs)
+    for source in inputs:
+        stem = stems[source]
+        job = copy.copy(args)
+        job.input, job.file, job.quiet = source, None, True
+        job.export = str(out / f"{stem}{suffix(args.export, '.png')}") if args.export else None
+        job.export_code = str(out / f"{stem}.py") if args.export_code else None
+        job.report = (
+            str(out / f"{stem}_report{suffix(args.report, '.html')}") if args.report else None
+        )
+        import contextlib
+        import io
+
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+            try:
+                code = _run_cli(job, parser)
+            except SystemExit as exc:  # a parser.error for this file: report it, carry on
+                code = exc.code if isinstance(exc.code, int) and exc.code else 2
+        lines = [line.strip() for line in captured.getvalue().splitlines() if line.strip()]
+        if code == 0:
+            print(f"ok      {source} -> {', '.join(lines)}")
+        else:
+            failures += 1
+            errors = [line for line in lines if line.startswith("error:")]
+            reason = (errors or lines or ["unknown error"])[0].removeprefix("error:").strip()
+            print(f"FAILED  {source}: {reason}")
+    print(f"{len(inputs) - failures} of {len(inputs)} file(s) done.", file=sys.stderr)
+    return 1 if failures else 0
 
 
 def _parse_size(text: str, parser: argparse.ArgumentParser) -> tuple[float, float]:

@@ -13,6 +13,7 @@ drops 90% of its data is worse than no chart.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,7 +22,7 @@ import pandas as pd
 
 from .errors import PlotaVizError, PlotError
 from .profiler import DERIVED_SUFFIXES, as_float, infer_role
-from .spec import MATRIX_CHARTS, ChartSpec
+from .spec import MATRIX_CHARTS, MAX_FACETS, ChartSpec
 
 #: Above this many points a scatter/line becomes unresponsive in a browser view.
 MAX_POINTS = 100_000
@@ -170,7 +171,10 @@ def prepare(
             numeric = numeric[keep]
         return PreparedData(numeric, eff, spec, notes, False, rows_original)
 
-    work = df[[c for c in spec.columns_used if c in df.columns]].copy()
+    wanted = [*spec.columns_used, *([spec.facet] if spec.facet else [])]
+    work = df[[c for c in dict.fromkeys(wanted) if c in df.columns]].copy()
+    if spec.options.get("facet") and not spec.facet:
+        notes.append(f"A {spec.chart} chart cannot be split into panels; showing one chart.")
 
     # Drop rows that cannot be plotted, and say how many.
     before = len(work)
@@ -187,7 +191,7 @@ def prepare(
         )
 
     # Cap categories on the x axis (and on the colour split) before aggregating.
-    for column, is_axis in ((spec.x, True), (spec.color, False)):
+    for column, is_axis in ((spec.x, True), (spec.color, False), (spec.facet, False)):
         if not column or column not in work.columns:
             continue
         if pd.api.types.is_numeric_dtype(work[column]) or pd.api.types.is_datetime64_any_dtype(
@@ -195,7 +199,7 @@ def prepare(
         ):
             continue
         n_unique = work[column].nunique()
-        limit = cap if is_axis else min(cap, 12)
+        limit = cap if is_axis else min(cap, 12 if column != spec.facet else MAX_FACETS)
         if n_unique > limit:
             work, dropped = _cap_categories(work, column, limit, spec)
             notes.append(
@@ -314,7 +318,7 @@ def _aggregate(df: pd.DataFrame, spec: ChartSpec, eff: ChartSpec) -> pd.DataFram
         spec: The caller's spec, which names real source columns.
         eff: The effective spec, which names the measure column to produce.
     """
-    keys = _group_keys(df, spec.x, spec.color)
+    keys = _group_keys(df, spec.x, spec.color, spec.facet)
     measure = eff.y
     if spec.chart == "heatmap":
         keys = _group_keys(df, spec.x, spec.y)
@@ -358,7 +362,7 @@ def _downsample(df: pd.DataFrame, spec: ChartSpec, max_points: int) -> pd.DataFr
         and spec.y is not None
         and spec.y in df.columns
     )
-    if is_time_series and spec.color is None:
+    if is_time_series and spec.color is None and spec.facet is None:
         return _lttb(df, str(spec.x), str(spec.y), max_points)
     return df.sample(max_points, random_state=0).sort_index()
 
@@ -463,12 +467,22 @@ def build_plotly(df: pd.DataFrame, spec: ChartSpec, *, prepared: PreparedData | 
     opts = spec.options
     sequence = palette_for(spec)
     pal: dict[str, Any] = {"color_discrete_sequence": sequence} if sequence else {}
+    # One panel per category: Plotly's facet grid, three panels per row.
+    facet: dict[str, Any] = (
+        {"facet_col": spec.facet, "facet_col_wrap": 3} if spec.facet in frame.columns else {}
+    )
 
     try:
         chart = spec.chart
         if chart == "histogram":
             fig = px.histogram(
-                frame, x=spec.x, color=spec.color, nbins=opts.get("bins"), title=title, **pal
+                frame,
+                x=spec.x,
+                color=spec.color,
+                nbins=opts.get("bins"),
+                title=title,
+                **pal,
+                **facet,
             )
         elif chart == "kde":
             grid, density = kde_curve(frame[spec.x])
@@ -492,6 +506,7 @@ def build_plotly(df: pd.DataFrame, spec: ChartSpec, *, prepared: PreparedData | 
                 orientation=opts.get("orientation", "v"),
                 title=title,
                 **pal,
+                **facet,
             )
         elif chart == "pie":
             fig = px.pie(frame, names=spec.x, values=spec.y, title=title, **pal)
@@ -508,6 +523,7 @@ def build_plotly(df: pd.DataFrame, spec: ChartSpec, *, prepared: PreparedData | 
                 trendline="ols" if opts.get("trendline") and _has_statsmodels() else None,
                 title=title,
                 **pal,
+                **facet,
             )
         elif chart == "line":
             fig = px.line(
@@ -518,9 +534,10 @@ def build_plotly(df: pd.DataFrame, spec: ChartSpec, *, prepared: PreparedData | 
                 markers=len(frame) < 200,
                 title=title,
                 **pal,
+                **facet,
             )
         elif chart == "area":
-            fig = px.area(frame, x=spec.x, y=spec.y, color=spec.color, title=title, **pal)
+            fig = px.area(frame, x=spec.x, y=spec.y, color=spec.color, title=title, **pal, **facet)
         elif chart == "box":
             fig = px.box(
                 frame,
@@ -530,10 +547,11 @@ def build_plotly(df: pd.DataFrame, spec: ChartSpec, *, prepared: PreparedData | 
                 points="outliers",
                 title=title,
                 **pal,
+                **facet,
             )
         elif chart == "violin":
             fig = px.violin(
-                frame, x=spec.x, y=spec.y, color=spec.color, box=True, title=title, **pal
+                frame, x=spec.x, y=spec.y, color=spec.color, box=True, title=title, **pal, **facet
             )
         elif chart == "heatmap":
             value = spec.color or "count"
@@ -659,19 +677,33 @@ def build_matplotlib(
     import matplotlib
 
     matplotlib.use("Agg", force=False)
-    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
 
     data = prepared or prepare(df, spec)
     frame, spec = data.df, data.spec
     chart = spec.chart
 
     try:
+        if spec.facet is not None and spec.facet in frame.columns:
+            panels = frame[spec.facet].nunique() + int(frame[spec.facet].isna().any())
+            rows = math.ceil(min(max(panels, 1), MAX_FACETS + 2) / 3)
+            fig = Figure(
+                figsize=(figsize[0], figsize[1] * max(1.0, 0.65 * rows)),
+                dpi=dpi,
+                layout="constrained",
+            )
+            _draw_facets(fig, fig.add_gridspec(1, 1)[0, 0], data)
+            fig.suptitle(spec.display_title())
+            return fig
         if chart == "pair_plot":
             fig = _mpl_pair_plot(frame, figsize=figsize, dpi=dpi, color=primary_color(spec))
             fig.suptitle(spec.display_title())
             return fig
 
-        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        # A bare Figure, not pyplot: no global registry to leak into or to race on when charts are
+        # built on a worker thread.
+        fig = Figure(figsize=figsize, dpi=dpi)
+        ax = fig.subplots()
         _draw_into(fig, ax, data)
 
         if data.sampled:
@@ -877,7 +909,7 @@ def _mpl_distribution(ax: Any, frame: pd.DataFrame, spec: ChartSpec, *, violin: 
 
 def _mpl_treemap(ax: Any, frame: pd.DataFrame, spec: ChartSpec) -> None:
     """Draw a simple slice-and-dice treemap without pulling in a dedicated dependency."""
-    import matplotlib.pyplot as plt
+    import matplotlib
     from matplotlib.patches import Rectangle
 
     labels = frame[str(spec.x)].astype(str).tolist()
@@ -893,7 +925,7 @@ def _mpl_treemap(ax: Any, frame: pd.DataFrame, spec: ChartSpec) -> None:
         raise PlotError("The treemap has no positive values to lay out.")
 
     total = sum(size for _, size in pairs)
-    cmap = plt.get_cmap("tab20")
+    cmap = matplotlib.colormaps["tab20"]
     x = y = 0.0
     width = height = 1.0
     horizontal = True
@@ -941,12 +973,39 @@ def _mpl_pair_plot(
     frame: pd.DataFrame, *, figsize: tuple[float, float], dpi: int, color: str = DEFAULT_COLOR
 ) -> Any:
     """Scatter-matrix of up to five numeric columns, histograms on the diagonal."""
-    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
 
-    fig = plt.figure(figsize=figsize, dpi=dpi)
+    fig = Figure(figsize=figsize, dpi=dpi)
     _draw_pair_plot(fig, fig.add_gridspec(1, 1)[0, 0], frame, color=color)
     fig.tight_layout()
     return fig
+
+
+#: Marker for the panel holding rows whose facet value is missing.
+_MISSING_PANEL = object()
+
+
+def _draw_facets(fig: Any, cell: Any, data: PreparedData) -> None:
+    """Draw one panel per value of the spec's facet column into a grid cell."""
+    column = str(data.spec.facet)
+    series = data.df[column]
+    values: list[Any] = list(pd.unique(series.dropna()))
+    if OTHER_LABEL in values:  # keep the "Other" bucket last
+        values = [v for v in values if v != OTHER_LABEL] + [OTHER_LABEL]
+    missing = series.isna()
+    if bool(missing.any()):
+        values.append(_MISSING_PANEL)  # rows with no value get their own panel, not dropped
+    columns = min(3, max(1, len(values)))
+    rows = math.ceil(len(values) / columns) if values else 1
+    grid = cell.subgridspec(rows, columns)
+    for index, value in enumerate(values):
+        mask = missing if value is _MISSING_PANEL else (series == value).fillna(False)
+        subset = data.df[mask.astype(bool)]
+        panel = PreparedData(subset, data.spec, data.source_spec, [], False, len(subset))
+        ax = fig.add_subplot(grid[index // columns, index % columns])
+        _draw_into(fig, ax, panel)
+        label = "(missing)" if value is _MISSING_PANEL else value
+        ax.set_title(f"{column} = {label}", fontsize=9)
 
 
 def _draw_pair_plot(fig: Any, cell: Any, frame: pd.DataFrame, *, color: str) -> None:
@@ -1004,13 +1063,13 @@ def build_matplotlib_grid(
     matplotlib.use("Agg", force=False)
     import math
 
-    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
 
     if not specs:
         raise PlotError("The dashboard has no charts.", hint="Pin a chart to the dashboard first.")
     columns = max(1, min(int(columns), len(specs)))
     rows = math.ceil(len(specs) / columns)
-    fig = plt.figure(
+    fig = Figure(
         figsize=(tile_size[0] * columns, tile_size[1] * rows), dpi=dpi, layout="constrained"
     )
     grid = fig.add_gridspec(rows, columns)
@@ -1018,6 +1077,9 @@ def build_matplotlib_grid(
         cell = grid[index // columns, index % columns]
         try:
             data = prepare(df, spec, max_points=max_points)
+            if data.spec.facet is not None and data.spec.facet in data.df.columns:
+                _draw_facets(fig, cell, data)
+                continue
             if data.spec.chart == "pair_plot":
                 _draw_pair_plot(fig, cell, data.df, color=primary_color(data.spec))
                 continue

@@ -16,14 +16,23 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QByteArray, QSettings, Qt, QUrl
-from PySide6.QtGui import QAction, QDesktopServices, QDragEnterEvent, QDropEvent, QKeySequence
+from PySide6.QtCore import QByteArray, QSettings, Qt, QTimer, QUrl
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QDesktopServices,
+    QDragEnterEvent,
+    QDropEvent,
+    QGuiApplication,
+    QKeySequence,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -32,6 +41,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTableView,
     QTabWidget,
+    QTextBrowser,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -44,18 +54,21 @@ from ..core.errors import PlotaVizError
 from ..core.llm import LLMAssistant, OllamaProvider, get_provider
 from ..core.plotter import MAX_POINTS
 from ..core.preprocess import QueryFilter
+from ..core.report import export_report
 from ..core.session import SESSION_SUFFIX, Session
 from ..core.spec import ChartSpec
 from .cleaning_panel import CleaningPanel
 from .customize_panel import CustomizePanel, apply_customization
-from .dashboard_view import DashboardView
+from .dashboard_view import DashboardView, build_tiles
 from .export_dialog import ExportDialog
 from .filter_panel import FilterPanel
 from .import_dialog import ImportDialog
-from .interactive_view import ChartView
+from .interactive_view import ChartView, RenderResult, build_render
+from .join_dialog import JoinDialog
 from .nl_query_bar import NLQueryBar
 from .settings_dialog import SettingsDialog
-from .table_model import DataFrameModel
+from .table_model import DataFrameModel, column_summary_html
+from .theme import apply_theme
 from .type_override import TypeOverridePanel
 from .workers import TaskRunner
 
@@ -89,8 +102,26 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("plotaviz", "plotaviz")
         self.analysis: Analysis | None = None
         self.session_path: Path | None = None
+        # True once anything changed since the last load or save; drives the close/open prompt.
+        self._dirty = False
+        #: Ask before discarding unsaved changes. Automated tests switch this off: a modal
+        #: dialog during teardown would block a headless run.
+        self.ask_before_discarding = True
         self._session_view: dict[str, Any] = {}
         self.runner = TaskRunner(self)
+        # Charts and dashboard tiles are built on their own workers so drawing never blocks the
+        # window or waits behind a replay. Only the newest request matters: a request made while
+        # one is running sets the "again" flag and is redone when the worker goes idle.
+        self.render_runner = TaskRunner(self)
+        self.render_runner.idle.connect(self._render_if_requested)
+        self._render_again = False
+        self.tile_runner = TaskRunner(self)
+        self.tile_runner.idle.connect(self._tiles_if_requested)
+        self._tiles_again = False
+        # Bumped whenever what should be on screen changes; a worker result built for an older
+        # generation is dropped instead of drawn over the newer state.
+        self._render_generation = 0
+        self._tiles_generation = 0
         # Work requested while another task was running, in order. Entries with the same key
         # replace each other — a burst of filter edits needs one replay with the final state —
         # but different kinds of change (a type override, then a filter) are all kept.
@@ -101,6 +132,11 @@ class MainWindow(QMainWindow):
         self._build_docks()
         self._build_menus()
         self._build_status_bar()
+        self._dark = False
+        self._apply_theme()
+        hints = QGuiApplication.styleHints()
+        if hasattr(hints, "colorSchemeChanged"):
+            hints.colorSchemeChanged.connect(self._on_system_scheme_changed)
         self._restore_geometry()
         self._refresh_llm_state()
 
@@ -123,6 +159,7 @@ class MainWindow(QMainWindow):
 
         prefer_static = self.settings.value("performance/prefer_static", False, type=bool)
         self.chart_view = ChartView(central, prefer_static=prefer_static)
+        self.chart_view.static_fallback_needed.connect(lambda: self._render_current(changed=False))
         layout.addWidget(self.chart_view, stretch=1)
 
         self.chart_note = QLabel("", central)
@@ -161,7 +198,36 @@ class MainWindow(QMainWindow):
         self.preview.setAlternatingRowColors(True)
         self.preview.setSelectionBehavior(QTableView.SelectionBehavior.SelectColumns)
         self.preview.horizontalHeader().setStretchLastSection(True)
-        self.preview.setSortingEnabled(False)
+        # Header clicks sort the whole frame (DataFrameModel.sort), not just the visible rows,
+        # and show that column's statistics underneath.
+        self.preview.setSortingEnabled(True)
+        self.preview.horizontalHeader().setSortIndicatorShown(True)
+        self.preview.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        self.preview.horizontalHeader().sectionClicked.connect(self._show_column_stats)
+        self.preview_model.view_changed.connect(
+            lambda: self.preview_status.setText(self.preview_model.status_text())
+        )
+        self.preview_runner = TaskRunner(self)
+        self.preview_runner.idle.connect(self._preview_if_requested)
+        self._preview_next: tuple[Any, Any] | None = None
+        self.preview_model.scheduler = self._schedule_preview
+
+        self.preview_search = QLineEdit(left)
+        self.preview_search.setPlaceholderText("Search all rows…")
+        self.preview_search.setClearButtonEnabled(True)
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(300)
+        self._search_timer.timeout.connect(
+            lambda: self.preview_model.set_search(self.preview_search.text())
+        )
+        self.preview_search.textChanged.connect(lambda _: self._search_timer.start())
+
+        self.column_stats = QTextBrowser(left)
+        self.column_stats.setMaximumHeight(170)
+        self.column_stats.setPlaceholderText(
+            "Click a column header to sort and see its statistics."
+        )
 
         self.preview_status = QLabel("No data loaded.", left)
         self.preview_status.setStyleSheet("color: palette(mid); font-size: 11px;")
@@ -175,8 +241,10 @@ class MainWindow(QMainWindow):
         preview_page = QWidget(data_tabs)
         preview_layout = QVBoxLayout(preview_page)
         preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.addWidget(self.preview)
+        preview_layout.addWidget(self.preview_search)
+        preview_layout.addWidget(self.preview, stretch=1)
         preview_layout.addWidget(self.preview_status)
+        preview_layout.addWidget(self.column_stats)
         data_tabs.addTab(preview_page, "Preview")
         data_tabs.addTab(self.cleaning_report, "Cleaning report")
 
@@ -270,6 +338,11 @@ class MainWindow(QMainWindow):
         self.recent_menu = file_menu.addMenu("Open &recent")
         self._rebuild_recent_menu()
 
+        self.join_action = QAction("&Join another dataset…", self)
+        self.join_action.triggered.connect(self.join_dataset)
+        self.join_action.setEnabled(False)
+        file_menu.addAction(self.join_action)
+
         file_menu.addSeparator()
 
         open_session = QAction("Open &session…", self)
@@ -296,6 +369,11 @@ class MainWindow(QMainWindow):
         self.export_action.setEnabled(False)
         file_menu.addAction(self.export_action)
 
+        self.report_action = QAction("Export &report…", self)
+        self.report_action.triggered.connect(self.export_report)
+        self.report_action.setEnabled(False)
+        file_menu.addAction(self.report_action)
+
         file_menu.addSeparator()
         quit_action = QAction("&Quit", self)
         quit_action.setShortcut(QKeySequence.StandardKey.Quit)
@@ -321,6 +399,18 @@ class MainWindow(QMainWindow):
         self.pin_action.setShortcut("Ctrl+D")
         self.pin_action.triggered.connect(self.pin_current)
         view_menu.addAction(self.pin_action)
+        view_menu.addSeparator()
+        theme_menu = view_menu.addMenu("&Theme")
+        self.theme_group = QActionGroup(self)
+        self.theme_group.setExclusive(True)
+        current = str(self.settings.value("appearance/theme", "system"))
+        for value, label in (("system", "Follow the system"), ("light", "Light"), ("dark", "Dark")):
+            action = QAction(label, self, checkable=True)
+            action.setData(value)
+            action.setChecked(value == current)
+            action.triggered.connect(lambda _=False, v=value: self.set_theme(v))
+            self.theme_group.addAction(action)
+            theme_menu.addAction(action)
         view_menu.addSeparator()
         settings_action = QAction("&Settings…", self)
         settings_action.setShortcut(QKeySequence.StandardKey.Preferences)
@@ -391,6 +481,8 @@ class MainWindow(QMainWindow):
         if not path.exists():
             self._error("File not found", f"There is no file at {path}.")
             return
+        if not self._maybe_save_changes():
+            return
 
         self.settings.setValue("paths/last_dir", str(path.parent))
         if path.suffix.lower() == SESSION_SUFFIX:
@@ -399,12 +491,34 @@ class MainWindow(QMainWindow):
             except PlotaVizError as exc:
                 self._error("Could not open the session", str(exc))
                 return
+            if not Path(session.source_path).exists() and not self._locate_source(session):
+                return
             if not self._confirm_session_queries(session):
                 return
             self._session_view = dict(session.view)
             self._run(self._load_session_task, session, path, label=f"Restoring {path.name}…")
         else:
             self._run(self._load_dataset_task, path, options or {}, label=f"Loading {path.name}…")
+
+    def _locate_source(self, session: Session) -> bool:
+        """Ask where a session's data file went; True if the user pointed at one."""
+        missing = Path(session.source_path or "?")
+        answer = QMessageBox.question(
+            self,
+            "Data file not found",
+            f"This session's data file is not at:\n{missing}\n\nLocate it? A file with "
+            "different contents will still open, with a warning.",
+            QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Open:
+            return False
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, f"Locate {missing.name}", str(Path.home()), _OPEN_FILTER
+        )
+        if not chosen:
+            return False
+        session.relocate(chosen)
+        return True
 
     def _confirm_session_queries(self, session: Session) -> bool:
         """Ask before replaying query filters from a session file.
@@ -499,13 +613,14 @@ class MainWindow(QMainWindow):
                 analysis.profile, analysis.type_overrides, inferred=analysis.inferred_types
             )
             self.filter_panel.set_profile(analysis.profile)
+            self.customize_panel.set_facet_columns(
+                [*analysis.profile.categorical, *analysis.profile.boolean]
+            )
         self.nl_bar.set_columns(list(analysis.df.columns))
 
         self._populate_recommendations()
         self._render_current()
 
-        name = analysis.load_result.path.name
-        self.setWindowTitle(f"{name} — {__app_name__}")
         self.filter_panel.set_filters(analysis.pipeline.filters)
         self._set_editing_tile(None)
         self._refresh_dashboard(force=True)
@@ -517,11 +632,106 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(analysis.load_result.summary())
         self._remember_recent(analysis.load_result.path)
 
-        for action in (self.export_action, self.save_session_action, self.save_session_as_action):
+        for action in (
+            self.export_action,
+            self.save_session_action,
+            self.save_session_as_action,
+            self.report_action,
+            self.join_action,
+        ):
             action.setEnabled(True)
+
+        self._set_dirty(False)
 
         if warning:
             self._warn("Session restored with differences", warning)
+
+    # ------------------------------------------------------------------ theme
+
+    def set_theme(self, theme: str) -> None:
+        """Switch between system, light, and dark, and redraw what is on screen."""
+        self.settings.setValue("appearance/theme", theme)
+        for action in self.theme_group.actions():
+            action.setChecked(action.data() == theme)
+        self._apply_theme()
+
+    def _apply_theme(self) -> None:
+        theme = str(self.settings.value("appearance/theme", "system"))
+        self._dark = apply_theme(theme)
+        self.preview_model.dark = self._dark
+        self.preview_model.headerDataChanged.emit(
+            Qt.Orientation.Horizontal, 0, max(0, self.preview_model.columnCount() - 1)
+        )
+        if self.analysis is not None:
+            self._render_current(changed=False)
+            self._refresh_dashboard(force=True, mark_dirty=False)
+
+    def _on_system_scheme_changed(self, *_: object) -> None:
+        if str(self.settings.value("appearance/theme", "system")) == "system":
+            self._apply_theme()
+
+    # ------------------------------------------------------------------ data preview
+
+    def _schedule_preview(self, work: Any, done: Any) -> None:
+        """Run a preview sort/search on its worker; only the newest request is applied."""
+        if self.preview_runner.busy:
+            self._preview_next = (work, done)
+            return
+        self.preview_runner.start(
+            work,
+            on_finished=lambda view: None if self._preview_next else done(view),
+            on_failed=lambda message, _trace: self.preview_status.setText(message),
+        )
+
+    def _preview_if_requested(self) -> None:
+        if self._preview_next is not None:
+            work, done = self._preview_next
+            self._preview_next = None
+            self._schedule_preview(work, done)
+
+    def _show_column_stats(self, section: int) -> None:
+        """Show the clicked column's profile under the preview."""
+        if self.analysis is None or self.analysis.profile is None:
+            return
+        columns = list(self.analysis.df.columns)
+        if not 0 <= section < len(columns):
+            return
+        prof = self.analysis.profile.columns.get(str(columns[section]))
+        if prof is not None:
+            self.column_stats.setHtml(column_summary_html(prof))
+
+    # ------------------------------------------------------------------ unsaved changes
+
+    def _set_dirty(self, dirty: bool = True) -> None:
+        """Record whether there are unsaved changes, and show it in the title (``*``)."""
+        self._dirty = dirty and self.analysis is not None
+        if self.analysis is None:
+            self.setWindowTitle(__app_name__)
+            return
+        name = (self.session_path or self.analysis.load_result.path).name
+        self.setWindowTitle(f"{name}{' *' if self._dirty else ''} — {__app_name__}")
+
+    def _maybe_save_changes(self) -> bool:
+        """Offer to save before the current work is replaced or the window closes.
+
+        Returns:
+            True to go ahead (saved, or the user chose to discard), False to stay.
+        """
+        if not self._dirty or self.analysis is None or not self.ask_before_discarding:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Unsaved changes",
+            "This analysis has changes that are not saved in a session file.\n\n"
+            "Save them before continuing?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if answer == QMessageBox.StandardButton.Save:
+            return self.save_session()
+        return answer == QMessageBox.StandardButton.Discard
 
     # ------------------------------------------------------------------ charting
 
@@ -615,31 +825,64 @@ class MainWindow(QMainWindow):
         """Display the justification for the current chart."""
         self.why_label.setPlainText(spec.why if spec and spec.why else "")
 
-    def _render_current(self) -> None:
-        """Draw the active chart, surfacing any preparation notes."""
+    def _render_current(self, *, changed: bool = True) -> None:
+        """Draw the active chart, surfacing any preparation notes.
+
+        Args:
+            changed: Whether this redraw follows a change worth saving. A redraw for a renderer
+                switch is not one.
+        """
+        if changed:
+            self._set_dirty()
+        self._render_generation += 1
         if self.analysis is None or self.analysis.spec is None:
             self.chart_view.show_message("No chart is selected yet.")
             return
         # The builder row and the customize panel always mirror the chart on screen.
         self.nl_bar.show_spec(self.analysis.spec, announce=False)
         self.customize_panel.set_spec(self.analysis.spec)
-        try:
-            notes = self.chart_view.render_spec(
-                self.analysis.df,
-                self.analysis.spec,
-                max_points=int(self.settings.value("performance/max_points", MAX_POINTS)),
-            )
-        except PlotaVizError as exc:
-            self.chart_view.show_message(str(exc))
-            self.statusBar().showMessage("The chart could not be drawn.")
+        if self.render_runner.busy:
+            self._render_again = True
             return
 
+        # Snapshot what to draw: frames are never mutated in place, and the spec is copied, so
+        # the worker cannot see a half-applied change.
+        df, spec = self.analysis.df, self.analysis.spec.copy()
+        interactive = self.chart_view.interactive
+        max_points = int(self.settings.value("performance/max_points", MAX_POINTS))
+        generation = self._render_generation
+        dark = self._dark
+        self.render_runner.start(
+            lambda: build_render(
+                df, spec, interactive=interactive, max_points=max_points, dark=dark
+            ),
+            on_finished=lambda result: self._install_render(result, generation),
+            on_failed=lambda message, trace: self._render_failed(message, trace, generation),
+        )
+
+    def _render_if_requested(self) -> None:
+        if self._render_again:
+            self._render_again = False
+            self._render_current(changed=False)
+
+    def _install_render(self, result: RenderResult, generation: int) -> None:
+        """Show a chart built on the render worker — unless it is already out of date."""
+        if self._render_again or generation != self._render_generation:
+            return
+        notes = self.chart_view.install(result)
         if notes:
             self.chart_note.setText("  ".join(notes))
             self.chart_note.show()
         else:
             self.chart_note.hide()
         self.statusBar().showMessage(self.chart_view.renderer_note())
+
+    def _render_failed(self, message: str, _trace: str, generation: int) -> None:
+        if self._render_again or generation != self._render_generation:
+            return
+        self.chart_view.show_message(message)
+        self.chart_note.hide()
+        self.statusBar().showMessage("The chart could not be drawn.")
 
     # ------------------------------------------------------------------ panel callbacks
 
@@ -813,7 +1056,7 @@ class MainWindow(QMainWindow):
         if index is not None:
             self.update_tile_button.setText(f"Update tile {index + 1}")
 
-    def _refresh_dashboard(self, *, force: bool = False) -> None:
+    def _refresh_dashboard(self, *, force: bool = False, mark_dirty: bool = True) -> None:
         """Redraw the tiles if the Dashboard tab is showing; otherwise mark them stale.
 
         ``force`` marks the dashboard stale first — used after pinning, removing, reordering,
@@ -823,15 +1066,39 @@ class MainWindow(QMainWindow):
         self.central_tabs.setTabText(1, f"Dashboard ({count})" if count else "Dashboard")
         if force:
             self._dashboard_stale = True
+            self._tiles_generation += 1  # anything in flight now describes old tiles
+            if mark_dirty:
+                self._set_dirty()
         if not self._dashboard_stale or self.central_tabs.currentIndex() != 1:
             return
         self._dashboard_stale = False
         if self.analysis is None:
             self.dashboard_view.set_tiles(None, [], [])
             return
-        self.dashboard_view.set_tiles(
-            self.analysis.df, list(self.analysis.dashboard), self.analysis.tile_status()
+        if self.tile_runner.busy:
+            self._tiles_again = True
+            return
+        df, specs = self.analysis.df, [tile.copy() for tile in self.analysis.dashboard]
+        statuses = self.analysis.tile_status()
+        self._tiles_generation += 1
+        generation = self._tiles_generation
+
+        def installed(built: list[Any]) -> None:
+            if not self._tiles_again and generation == self._tiles_generation:
+                self.dashboard_view.set_tiles(df, specs, statuses, built)
+
+        dark = self._dark
+        self.tile_runner.start(
+            lambda: build_tiles(df, specs, statuses, dark=dark),
+            on_finished=installed,
+            on_failed=lambda message, _trace: self.statusBar().showMessage(message),
         )
+
+    def _tiles_if_requested(self) -> None:
+        if self._tiles_again:
+            self._tiles_again = False
+            self._dashboard_stale = True
+            self._refresh_dashboard()
 
     def _after_rerun(self, *, sync_panels: bool = False) -> None:
         """Refresh every panel after a pipeline replay."""
@@ -840,7 +1107,18 @@ class MainWindow(QMainWindow):
         self._refresh_dashboard(force=True)
         self._sync_cleaning_panel()
         self._sync_history_actions()
+        if self.analysis.profile is not None:
+            # Types and cleaning change which columns are categories.
+            self.customize_panel.set_facet_columns(
+                [*self.analysis.profile.categorical, *self.analysis.profile.boolean]
+            )
         if sync_panels:
+            current = self.filter_panel._profile
+            columns = set(self.analysis.df.columns)
+            if current is None or set(current.columns) != columns:
+                # Columns came or went (a join, an undo): rebuild the widgets, bounded by the
+                # unfiltered data so a filter can always be widened again.
+                self.filter_panel.set_profile(self.analysis.unfiltered_profile())
             self.filter_panel.set_filters(self.analysis.pipeline.filters)
             if self.analysis.profile:
                 self.type_panel.set_profile(
@@ -1039,10 +1317,53 @@ class MainWindow(QMainWindow):
 
         self._run(task, label=f"Exporting {target.name}…", on_finished=done)
 
-    def save_session(self, *, ask: bool = False) -> None:
-        """Save the current state to a ``.pviz`` file."""
+    def export_report(self) -> None:
+        """Write the analysis report (HTML or PDF) for the current state."""
         if self.analysis is None:
             return
+        source = self.analysis.load_result.path
+        suggested = source.with_name(f"{source.stem}_report.html")
+        chosen, _ = QFileDialog.getSaveFileName(
+            self, "Export report", str(suggested), "HTML report (*.html);;PDF report (*.pdf)"
+        )
+        if not chosen:
+            return
+        analysis, target = self.analysis, Path(chosen)
+
+        def task(progress: Any = None) -> Path:
+            if progress:
+                progress(40, f"Writing {target.name}…")
+            return export_report(analysis, target)
+
+        self._run(
+            task,
+            label=f"Exporting {target.name}…",
+            on_finished=lambda written: self.statusBar().showMessage(f"Saved {written}"),
+        )
+
+    def join_dataset(self) -> None:
+        """Add columns from a second file, matched on key columns."""
+        if self.analysis is None:
+            return
+        dialog = JoinDialog(
+            self.analysis.join_base(),
+            start_dir=self.analysis.load_result.path.parent,
+            parent=self,
+            normalize=self.analysis._renames_columns(),
+        )
+        if dialog.exec() != JoinDialog.DialogCode.Accepted:
+            return
+        values, analysis = dialog.result_values(), self.analysis
+        self._replay(
+            "Joining…",
+            lambda: analysis.join_dataset(values["path"], values["on"], how=values["how"]),
+            sync_panels=True,
+        )
+
+    def save_session(self, *, ask: bool = False) -> bool:
+        """Save the current state to a ``.pviz`` file. Returns whether it was saved."""
+        if self.analysis is None:
+            return False
 
         target = self.session_path
         if target is None or ask:
@@ -1051,7 +1372,7 @@ class MainWindow(QMainWindow):
                 self, "Save session", str(suggested), f"PlotaViz sessions (*{SESSION_SUFFIX})"
             )
             if not chosen:
-                return
+                return False
             target = Path(chosen)
 
         view = {
@@ -1065,22 +1386,29 @@ class MainWindow(QMainWindow):
             written = self.analysis.to_session(view).save(target)
         except PlotaVizError as exc:
             self._error("Could not save the session", str(exc))
-            return
+            return False
 
         self.session_path = written
+        self._set_dirty(False)
         self.statusBar().showMessage(f"Session saved to {written}")
+        return True
 
     # ------------------------------------------------------------------ settings / about
 
     def open_settings(self) -> None:
         """Show the settings dialog and apply anything that changed."""
-        dialog = SettingsDialog(self, settings=self.settings)
+        dialog = SettingsDialog(
+            self,
+            settings=self.settings,
+            profile=self.analysis.profile if self.analysis else None,
+            candidates=list(self.analysis.recommendations) if self.analysis else None,
+        )
         if dialog.exec() == SettingsDialog.DialogCode.Accepted:
             self._refresh_llm_state()
             self.chart_view.set_prefer_static(
                 self.settings.value("performance/prefer_static", False, type=bool)
             )
-            self._render_current()
+            self._render_current(changed=False)
 
     def show_about(self) -> None:
         """Show version and licensing information."""
@@ -1314,12 +1642,18 @@ class MainWindow(QMainWindow):
             self.restoreState(state)
 
     def closeEvent(self, event: Any) -> None:
-        """Persist window state, stop background work, and clean up temp files."""
+        """Offer to save, then persist window state, stop background work, clean up."""
+        if not self._maybe_save_changes():
+            event.ignore()
+            return
         self.settings.setValue("window/geometry", self.saveGeometry())
         self.settings.setValue("window/state", self.saveState())
         self.settings.sync()
         self.runner.cancel()
         self.runner.wait()
+        for worker in (self.render_runner, self.tile_runner, self.preview_runner):
+            worker.cancel()
+            worker.wait()
         self.chart_view.cleanup()
         super().closeEvent(event)
 

@@ -135,8 +135,13 @@ class TaskRunner(QObject):
 
     @property
     def busy(self) -> bool:
-        """Whether a task is currently running."""
-        return self._thread is not None and self._thread.isRunning()
+        """Whether a task is running or its results have not been delivered yet.
+
+        Busy until :meth:`_clear` runs, not merely until the thread stops: the result is
+        relayed to the UI thread through a queued signal, and a new task started in between used
+        to replace the callbacks, so the *old* result reached the *new* caller.
+        """
+        return self._thread is not None
 
     def start(
         self,

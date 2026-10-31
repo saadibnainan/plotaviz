@@ -13,17 +13,21 @@ hover and zoom, not the chart, and the status line says which renderer is active
 from __future__ import annotations
 
 import contextlib
+import json
+import os
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QStandardPaths, Qt, QUrl, Signal
 from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from ..core.errors import PlotError
 from ..core.plotter import MAX_POINTS, build_matplotlib, build_plotly, prepare
 from ..core.spec import ChartSpec
+from .theme import darken_figure
 
 #: Set once by :func:`webengine_available` so the probe import happens at most once.
 _WEBENGINE_STATE: bool | None = None
@@ -46,6 +50,98 @@ def webengine_available() -> bool:
     return _WEBENGINE_STATE
 
 
+@dataclass
+class RenderResult:
+    """A chart built off the UI thread, ready for :meth:`ChartView.install`.
+
+    Exactly one of :attr:`figure_json` (Plotly) and :attr:`figure` (matplotlib) is set.
+    """
+
+    figure_json: str | None = None
+    figure: Any = None
+    notes: list[str] = field(default_factory=list)
+    #: The interactive build failed and this is the static fallback.
+    fell_back: bool = False
+
+
+def build_render(
+    df: pd.DataFrame,
+    spec: ChartSpec,
+    *,
+    interactive: bool,
+    max_points: int | None = None,
+    dark: bool = False,
+) -> RenderResult:
+    """Prepare and build a chart. Pure and Qt-free, so it can run on a worker thread.
+
+    Args:
+        dark: Style the chart for a dark window. On-screen only; exports never use this.
+
+    Raises:
+        PlotError: If the chart cannot be built at all.
+    """
+    prepared = prepare(df, spec, max_points=max_points or MAX_POINTS)
+    notes = list(prepared.notes)
+
+    def static(fell_back: bool = False) -> RenderResult:
+        figure = build_matplotlib(df, spec, prepared=prepared, figsize=(9, 5.5), dpi=100)
+        if dark:
+            darken_figure(figure)
+        return RenderResult(figure=figure, notes=notes, fell_back=fell_back)
+
+    if interactive:
+        try:
+            figure = build_plotly(df, spec, prepared=prepared)
+            if dark:
+                figure.update_layout(template="plotly_dark")
+            return RenderResult(figure_json=figure.to_json(), notes=notes)
+        except PlotError:
+            raise
+        except Exception as exc:
+            notes.append(f"The interactive view failed ({exc}); showing a static chart instead.")
+            return static(fell_back=True)
+    return static()
+
+
+#: The page the interactive view loads once. Charts are pushed into it with Plotly.react.
+_SHELL_HTML = """<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{{margin:0;height:100%;overflow:hidden}}#chart{{width:100%;height:100%}}</style>
+<script src="{script}"></script>
+</head><body><div id="chart"></div>
+<script>
+window.PlotaViz = {{
+  render: function (json) {{
+    var figure = JSON.parse(json);
+    Plotly.react("chart", figure.data, figure.layout, {{responsive: true}});
+  }}
+}};
+</script></body></html>
+"""
+
+
+def _shell_page() -> Path:
+    """Write (once per plotly version) plotly.js and the shell page into the app cache."""
+    import plotly
+    from plotly.offline import get_plotlyjs
+
+    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.CacheLocation)
+    folder = Path(base or tempfile.gettempdir()) / "plotaviz-view"
+    folder.mkdir(parents=True, exist_ok=True)
+    script = folder / f"plotly-{plotly.__version__}.min.js"
+    source = get_plotlyjs().encode("utf-8")
+    # Rewrite when missing or not exactly the expected size: a write interrupted by a crash, or
+    # raced by a second instance, must not leave a truncated script cached forever. The write
+    # goes to a temporary name first and is renamed into place atomically.
+    if not script.exists() or script.stat().st_size != len(source):
+        partial = folder / f".{script.name}.{os.getpid()}.part"
+        partial.write_bytes(source)
+        os.replace(partial, script)
+    shell = folder / "chart.html"
+    shell.write_text(_SHELL_HTML.format(script=script.name), encoding="utf-8")
+    return shell
+
+
 class ChartView(QWidget):
     """Displays a chart, interactively when it can and statically when it cannot.
 
@@ -54,6 +150,10 @@ class ChartView(QWidget):
         prefer_static: Force the matplotlib canvas even when WebEngine is present. Useful for
             very large charts and for users who dislike the browser view.
     """
+
+    #: The interactive view failed while showing a chart; the owner should re-render (the
+    #: view has already switched to static).
+    static_fallback_needed = Signal()
 
     def __init__(self, parent: QWidget | None = None, *, prefer_static: bool = False) -> None:
         super().__init__(parent)
@@ -66,7 +166,13 @@ class ChartView(QWidget):
         self._canvas: Any = None
         self._toolbar: Any = None
         self._web: Any = None
+        self._shell_ready = False
+        self._shell_failed = False
+        self._pending_json: str | None = None
         self.last_notes: list[str] = []
+        #: Counters for tests and diagnostics: full page loads vs. in-place updates.
+        self.page_loads = 0
+        self.react_calls = 0
 
         self._show_placeholder(
             "Open a dataset to get started.\n\nDrag a CSV, Excel, JSON, or Parquet file here."
@@ -93,73 +199,128 @@ class ChartView(QWidget):
 
     # ------------------------------------------------------------------ rendering
 
+    @property
+    def interactive(self) -> bool:
+        """Whether the next render uses the Plotly view."""
+        return self._interactive
+
     def render_spec(
         self, df: pd.DataFrame, spec: ChartSpec, *, max_points: int | None = None
     ) -> list[str]:
-        """Draw a chart.
+        """Build and show a chart on the calling thread (the synchronous convenience path).
 
-        Args:
-            df: The cleaned, filtered data.
-            spec: What to draw.
+        The main window builds on a worker with :func:`build_render` and calls :meth:`install`;
+        this does both for callers that do not need the chart off the UI thread.
 
         Returns:
-            User-facing notes from preparation (sampling, category capping) so the caller can
-            surface them. They are also stored on :attr:`last_notes`.
+            User-facing notes from preparation (sampling, category capping).
 
         Raises:
-            PlotError: If the chart cannot be built. The caller shows this in a dialog.
+            PlotError: If the chart cannot be built.
         """
-        prepared = prepare(df, spec, max_points=max_points or MAX_POINTS)
-        self.last_notes = list(prepared.notes)
+        result = build_render(df, spec, interactive=self._interactive, max_points=max_points)
+        notes = self.install(result)
+        if result.figure_json is not None and not self._interactive:
+            # The interactive install failed just now: draw the static chart in its place, and
+            # keep the note that says why.
+            failure = [n for n in notes if "interactive view failed" in n]
+            static = build_render(df, spec, interactive=False, max_points=max_points)
+            notes = [*self.install(static), *failure]
+            self.last_notes = notes
+        return notes
 
-        if self._interactive:
+    def install(self, result: RenderResult) -> list[str]:
+        """Show a chart built by :func:`build_render`. Must run on the UI thread."""
+        self.last_notes = list(result.notes)
+        if result.fell_back:
+            self._interactive = False
+        if result.figure_json is not None:
             try:
-                self._render_interactive(df, spec, prepared)
+                self._install_interactive(result.figure_json)
                 return self.last_notes
-            except PlotError:
-                raise
-            except Exception as exc:
+            except Exception as exc:  # WebEngine broke at runtime
+                # The result holds only Plotly JSON, so the static chart has to be rebuilt from
+                # the data; the owner does that on this signal (render_spec does it inline).
                 self._interactive = False
                 self.last_notes.append(
                     f"The interactive view failed ({exc}); showing a static chart instead."
                 )
-
-        self._render_static(df, spec, prepared)
+                self.show_message("Switching to the static chart…")
+                self.static_fallback_needed.emit()
+                return self.last_notes
+        self._install_static(result.figure)
         return self.last_notes
 
-    def _render_interactive(self, df: pd.DataFrame, spec: ChartSpec, prepared: Any) -> None:
-        """Render through Plotly into a QWebEngineView."""
-        from PySide6.QtWebEngineWidgets import QWebEngineView
+    def _install_interactive(self, figure_json: str) -> None:
+        """Show a Plotly figure, updating the already-loaded page in place when possible.
 
-        figure = build_plotly(df, spec, prepared=prepared)
+        The page (and the ~4 MB plotly.js it loads from the app cache) is loaded once. Every
+        later chart is pushed into it with ``Plotly.react``, so filtering or switching charts
+        no longer re-parses plotly.js and flashes a blank view.
+        """
+        from PySide6.QtWebEngineWidgets import QWebEngineView
 
         if not isinstance(self._web, QWebEngineView):
             self._clear()
             self._web = QWebEngineView(self)
             self._web.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             self._layout.addWidget(self._web)
+            self._shell_ready = False
+            self._web.loadFinished.connect(self._on_shell_loaded)
+            self.page_loads += 1
+            self._web.load(QUrl.fromLocalFile(str(_shell_page())))
+        self._pending_json = figure_json
+        if self._shell_failed:
+            self._load_standalone()
+        elif self._shell_ready:
+            self._push_figure()
 
-        # Plotly's bundled JS is several megabytes and `setHtml` truncates above ~2 MB, so the
-        # figure goes to a temp file and is loaded as a URL instead.
+    def _on_shell_loaded(self, ok: bool) -> None:
+        """The shell page finished loading; draw whatever chart is waiting."""
+        if ok:
+            self._shell_ready = True
+            self._push_figure()
+            return
+        # The shell could not load (a broken cache directory, say): from now on every chart is
+        # written as one standalone page, which is what earlier versions always did.
+        self._shell_failed = True
+        if self._web is not None:
+            self._web.loadFinished.disconnect(self._on_shell_loaded)
+        self._load_standalone()
+
+    def _load_standalone(self) -> None:
+        """Load the pending chart as a self-contained page (the no-shell fallback)."""
+        if self._pending_json is None or self._web is None:
+            return
+        import plotly.io as pio
+
+        figure = pio.from_json(self._pending_json)
+        self._pending_json = None
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".html", prefix="plotaviz_", delete=False, encoding="utf-8"
         ) as handle:
             handle.write(
                 figure.to_html(include_plotlyjs=True, full_html=True, config={"responsive": True})
             )
-        path = Path(handle.name)
-        self._temp_files.append(path)
-        self._web.load(QUrl.fromLocalFile(str(path)))
+        self._temp_files.append(Path(handle.name))
+        self.page_loads += 1
+        self._web.load(QUrl.fromLocalFile(handle.name))
         self._prune_temp_files()
 
-    def _render_static(self, df: pd.DataFrame, spec: ChartSpec, prepared: Any) -> None:
-        """Render through matplotlib into an embedded Qt canvas."""
+    def _push_figure(self) -> None:
+        if self._pending_json is None or self._web is None:
+            return
+        payload = json.dumps(self._pending_json)  # a JS string literal holding the figure JSON
+        self._pending_json = None
+        self.react_calls += 1
+        self._web.page().runJavaScript(f"window.PlotaViz && PlotaViz.render({payload});")
+
+    def _install_static(self, figure: Any) -> None:
+        """Show a matplotlib figure in an embedded Qt canvas."""
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
         from matplotlib.backends.backend_qtagg import (
             NavigationToolbar2QT as NavigationToolbar,
         )
-
-        figure = build_matplotlib(df, spec, prepared=prepared, figsize=(9, 5.5), dpi=100)
 
         self._clear()
         self._canvas = FigureCanvasQTAgg(figure)
@@ -203,6 +364,7 @@ class ChartView(QWidget):
                 widget.setParent(None)
                 widget.deleteLater()
                 setattr(self, attr, None)
+        self._shell_ready = False
 
     def _prune_temp_files(self, keep: int = 2) -> None:
         """Delete old temp HTML files, keeping the most recent few.

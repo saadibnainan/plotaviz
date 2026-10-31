@@ -379,7 +379,8 @@ class ChartSelector:
                 score -= weights["cardinality_penalty"] * min(1.0, n_series / (max_series * 4))
                 notes.append(
                     f"Splitting by {spec.color!r} would draw {n_series:,} series, which is too "
-                    "many to distinguish."
+                    "many to distinguish — one panel per category (Customize → Panels by) "
+                    "keeps them readable."
                 )
             elif 2 <= n_series <= max_series:
                 score += 0.05

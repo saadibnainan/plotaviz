@@ -12,7 +12,6 @@ Chart tab stays interactive, and "Open" puts any tile there.
 
 from __future__ import annotations
 
-import contextlib
 from typing import Any
 
 import pandas as pd
@@ -34,6 +33,7 @@ from PySide6.QtWidgets import (
 from ..core.errors import PlotaVizError
 from ..core.plotter import TILE_MAX_POINTS, build_matplotlib, prepare
 from ..core.spec import ChartSpec
+from .theme import darken_figure
 
 #: Height of one tile's chart, in pixels.
 TILE_HEIGHT = 320
@@ -105,7 +105,11 @@ class DashboardView(QWidget):
     # ------------------------------------------------------------------ rendering
 
     def set_tiles(
-        self, df: pd.DataFrame | None, specs: list[ChartSpec], statuses: list[str | None]
+        self,
+        df: pd.DataFrame | None,
+        specs: list[ChartSpec],
+        statuses: list[str | None],
+        built: list[Any] | None = None,
     ) -> None:
         """Rebuild every tile from the current data.
 
@@ -114,7 +118,11 @@ class DashboardView(QWidget):
             specs: Pinned charts in order.
             statuses: Per tile, ``None`` or why it cannot be drawn (from
                 :meth:`Analysis.tile_status`).
+            built: The output of :func:`build_tiles`, when it was computed on a worker thread.
+                Built here, on the calling thread, when omitted.
         """
+        if built is None and df is not None:
+            built = build_tiles(df, specs, statuses)
         self._clear()
         self.tile_count = len(specs)
         self.export_button.setEnabled(bool(specs))
@@ -137,15 +145,13 @@ class DashboardView(QWidget):
         )
         columns = self.columns
         for index, spec in enumerate(specs):
-            status = statuses[index] if index < len(statuses) else None
-            tile = self._tile(index, len(specs), df, spec, status)
+            content = built[index] if built and index < len(built) else "Not drawn yet."
+            tile = self._tile(index, len(specs), spec, content)
             self.grid.addWidget(tile, index // columns, index % columns)
         for column in range(columns):
             self.grid.setColumnStretch(column, 1)
 
-    def _tile(
-        self, index: int, total: int, df: pd.DataFrame, spec: ChartSpec, status: str | None
-    ) -> QWidget:
+    def _tile(self, index: int, total: int, spec: ChartSpec, content: Any) -> QWidget:
         """One tile: a title bar with actions, then the chart or the reason it cannot show."""
         frame = QFrame(self.container)
         frame.setFrameShape(QFrame.Shape.StyledPanel)
@@ -179,31 +185,20 @@ class DashboardView(QWidget):
             header.addWidget(button)
         layout.addLayout(header)
 
-        message = status
-        if message is None:
-            try:
-                layout.addWidget(self._canvas(df, spec, frame))
-            except PlotaVizError as exc:
-                message = exc.message
-        if message is not None:
-            label = QLabel(f"This chart cannot be drawn on the current data:\n{message}", frame)
+        if isinstance(content, str):
+            label = QLabel(f"This chart cannot be drawn on the current data:\n{content}", frame)
             label.setWordWrap(True)
             label.setMinimumHeight(TILE_HEIGHT // 2)
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             label.setStyleSheet("color: #A33;")
             layout.addWidget(label)
+        else:
+            layout.addWidget(self._canvas(content, frame))
         return frame
 
-    def _canvas(self, df: pd.DataFrame, spec: ChartSpec, parent: QWidget) -> Any:
+    def _canvas(self, figure: Any, parent: QWidget) -> Any:
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 
-        prepared = prepare(df, spec, max_points=TILE_MAX_POINTS)
-        figure = build_matplotlib(df, spec, prepared=prepared, figsize=(5.5, 3.6), dpi=90)
-        # Re-flow on every resize: tight_layout ran once at the build size, and a narrower tile
-        # would otherwise clip the axis labels.
-        figure.set_layout_engine("constrained")
-        for axes in figure.axes:
-            axes.title.set_fontsize(10)  # tiles are narrow; full-size titles overflow them
         canvas = FigureCanvasQTAgg(figure)
         canvas.setParent(parent)
         canvas.setMinimumHeight(TILE_HEIGHT)
@@ -213,12 +208,8 @@ class DashboardView(QWidget):
         return canvas
 
     def _clear(self) -> None:
-        """Remove every tile and close its matplotlib figure, so redraws do not leak."""
-        import matplotlib.pyplot as plt
-
-        for canvas in self._canvases:
-            with contextlib.suppress(Exception):
-                plt.close(canvas.figure)
+        """Remove every tile. Tile figures are plain ``Figure`` objects (not pyplot-managed),
+        so dropping the canvases frees them."""
         self._canvases.clear()
         while self.grid.count():
             item = self.grid.takeAt(0)
@@ -228,3 +219,34 @@ class DashboardView(QWidget):
                 widget.deleteLater()
         for column in range(3):
             self.grid.setColumnStretch(column, 0)
+
+
+def build_tiles(
+    df: pd.DataFrame, specs: list[ChartSpec], statuses: list[str | None], *, dark: bool = False
+) -> list[Any]:
+    """Build every tile's figure, or the reason it cannot be drawn. Qt-free: safe on a worker.
+
+    Returns:
+        Per tile, a matplotlib ``Figure`` or an error message string.
+    """
+    built: list[Any] = []
+    for index, spec in enumerate(specs):
+        status = statuses[index] if index < len(statuses) else None
+        if status is not None:
+            built.append(status)
+            continue
+        try:
+            prepared = prepare(df, spec, max_points=TILE_MAX_POINTS)
+            figure = build_matplotlib(df, spec, prepared=prepared, figsize=(5.5, 3.6), dpi=90)
+        except PlotaVizError as exc:
+            built.append(exc.message)
+            continue
+        # Re-flow on every resize: tight_layout ran once at the build size, and a narrower tile
+        # would otherwise clip the axis labels.
+        figure.set_layout_engine("constrained")
+        for axes in figure.axes:
+            axes.title.set_fontsize(10)  # tiles are narrow; full-size titles overflow them
+        if dark:
+            darken_figure(figure)
+        built.append(figure)
+    return built

@@ -19,6 +19,7 @@ from .errors import ExportError
 from .loader import read_code_for
 from .plotter import (
     MAX_CATEGORIES,
+    MAX_FACETS,
     OTHER_LABEL,
     PAIR_PLOT_MAX_COLUMNS,
     effective_spec,
@@ -292,8 +293,49 @@ def _chart_function(spec: ChartSpec, flavour: str) -> list[str]:
     lines.append("")
     body = _plotly_body(eff) if flavour == "plotly" else _matplotlib_body(eff)
     body = _customize(body, eff, flavour)
+    if eff.facet:
+        body = _facet_plotly(body, eff) if flavour == "plotly" else _facet_matplotlib(body, eff)
     lines += [f"    {line}" if line else "" for line in body]
     return lines
+
+
+def _facet_plotly(body: list[str], spec: ChartSpec) -> list[str]:
+    """Split a Plotly chart into one panel per category, as the app does."""
+    extra = f", facet_col={spec.facet!r}, facet_col_wrap=3, title="
+    return [
+        line.replace(", title=", extra, 1) if line.startswith("fig = px.") else line
+        for line in body
+    ]
+
+
+def _facet_matplotlib(body: list[str], spec: ChartSpec) -> list[str]:
+    """Wrap a single-axes matplotlib body in a loop that draws one panel per category."""
+    start = next(i for i, line in enumerate(body) if line.startswith("fig, ax = plt.subplots("))
+    inner = [line for line in body[start + 1 :] if line not in {"fig.tight_layout()", "return fig"}]
+    column = spec.facet
+    return [
+        *body[:start],
+        f"panels = list(pd.unique(plot_df[{column!r}].dropna()))",
+        f"if plot_df[{column!r}].isna().any():",
+        "    panels.append(None)  # rows with no value get their own panel, as in the app",
+        "ncols = max(1, min(3, len(panels)))",
+        "nrows = -(-len(panels) // ncols)",
+        "fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows), squeeze=False)",
+        "for unused in axes.flat[len(panels):]:",
+        "    unused.axis('off')",
+        "full_df = plot_df",
+        "for ax, value in zip(axes.flat, panels):",
+        "    if value is None:",
+        f"        plot_df = full_df[full_df[{column!r}].isna()]",
+        "    else:",
+        f"        plot_df = full_df[full_df[{column!r}] == value]",
+        *[f"    {line}" if line else "" for line in inner],
+        "    label = '(missing)' if value is None else value",
+        f"    ax.set_title(f'{column} = {{label}}', fontsize=9)",
+        f"fig.suptitle({spec.display_title()!r})",
+        "fig.tight_layout()",
+        "return fig",
+    ]
 
 
 def _customize(body: list[str], spec: ChartSpec, flavour: str) -> list[str]:
@@ -395,7 +437,7 @@ def _prepare_lines(spec: ChartSpec, eff: ChartSpec) -> list[str]:
             )
         return lines
 
-    used = list(spec.columns_used)
+    used = list(dict.fromkeys([*spec.columns_used, *([spec.facet] if spec.facet else [])]))
     # Like the app, only rows missing the plotted x/y go; a missing colour value stays a group.
     required = [c for c in (spec.x, spec.y) if c]
     lines.append(f"plot_df = df[{used!r}].dropna(subset={required!r})")
@@ -410,9 +452,14 @@ def _prepare_lines(spec: ChartSpec, eff: ChartSpec) -> list[str]:
             f"plot_df = cap_categories(plot_df, {spec.color!r}, {min(cap, 12)}, {spec.y!r}, "
             f"{spec.agg!r})"
         )
+    if spec.facet:
+        lines.append(
+            f"plot_df = cap_categories(plot_df, {spec.facet!r}, {min(cap, MAX_FACETS)}, "
+            f"{spec.y!r}, {spec.agg!r})"
+        )
 
     if spec.agg:
-        keys = group_keys(spec.x, spec.color)
+        keys = group_keys(spec.x, spec.color, spec.facet)
         measure = eff.y
         source_measure = spec.y
         if spec.chart == "heatmap":
@@ -631,7 +678,8 @@ def _matplotlib_body(spec: ChartSpec) -> list[str]:
                 lines.append(
                     f"ax.fill_between(plot_df[{x!r}], plot_df[{y!r}], alpha=0.3, color='#4C78A8')"
                 )
-        lines.append("fig.autofmt_xdate()")
+        # Rotate this axes' dates only (fig.autofmt_xdate hides labels outside the bottom row).
+        lines.append("ax.tick_params(axis='x', labelrotation=30)")
     elif chart in {"box", "violin"}:
         lines += [
             f"groups = [(str(k), g[{y!r}].dropna().to_numpy()) "

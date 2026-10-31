@@ -65,6 +65,11 @@ class Session:
     #: Hash of the source as found by the last :meth:`check_source`, so the loader can reuse it
     #: instead of reading a multi-gigabyte file a second time. Never written to disk.
     current_hash: str = field(default="", repr=False, compare=False)
+    #: The source path relative to the ``.pviz`` file, so a project folder can be moved or
+    #: shared and still find its data.
+    source_relative: str = ""
+    #: The recorded path the data was *not* found at, when it was found somewhere else.
+    relocated_from: str = field(default="", repr=False, compare=False)
 
     # ------------------------------------------------------------------ writing
 
@@ -76,6 +81,7 @@ class Session:
             "saved_at": self.saved_at or datetime.now(UTC).isoformat(timespec="seconds"),
             "source": {
                 "path": str(self.source_path),
+                "relative": self.source_relative,
                 "sha256": self.source_hash,
                 "options": dict(self.load_options),
             },
@@ -99,6 +105,7 @@ class Session:
         source = Path(self.source_path)
         if source.exists() and not self.source_hash:
             self.source_hash = file_hash(source)
+        self.source_relative = _relative_to(source, target.parent)
         self.saved_at = datetime.now(UTC).isoformat(timespec="seconds")
 
         try:
@@ -149,8 +156,9 @@ class Session:
                 hint=str(exc),
             ) from exc
 
-        return cls(
+        session = cls(
             source_path=str(source.get("path", "")),
+            source_relative=str(source.get("relative", "") or ""),
             source_hash=str(source.get("sha256", "")),
             load_options=dict(source.get("options") or {}),
             type_overrides=dict(payload.get("type_overrides") or {}),
@@ -166,6 +174,23 @@ class Session:
             saved_at=str(payload.get("saved_at", "")),
             version=version,
         )
+        # A moved or shared project: the recorded absolute path is gone, but the data sits at the
+        # same place relative to the session file. Use it, and say so in check_source().
+        if session.source_relative and not Path(session.source_path).exists():
+            candidate = (target.parent / session.source_relative).resolve()
+            if candidate.exists():
+                session.relocate(candidate)
+        return session
+
+    def relocate(self, path: str | Path) -> None:
+        """Point the session at its data file's new location.
+
+        The stored hash is kept, so :meth:`check_source` still reports whether the file at the
+        new location has the same contents.
+        """
+        if not self.relocated_from:
+            self.relocated_from = str(self.source_path)
+        self.source_path = str(Path(path).expanduser().resolve())
 
     # ------------------------------------------------------------------ validation
 
@@ -187,10 +212,24 @@ class Session:
             )
         if self.source_hash:
             self.current_hash = file_hash(source)
+        notes: list[str] = []
+        if self.relocated_from:
+            notes.append(f"The data file was not at {self.relocated_from}; using {source} instead.")
         if self.source_hash and self.current_hash != self.source_hash:
             saved = self.saved_at or "the time it was saved"
-            return (
+            notes.append(
                 f"{source.name} has changed since {saved}. The cleaning steps and chart will be "
                 "replayed against the new contents, so results may differ."
             )
-        return None
+        return "\n\n".join(notes) or None
+
+
+def _relative_to(source: Path, folder: Path) -> str:
+    """``source`` relative to ``folder``, or ``""`` when there is no relative path (another
+    drive on Windows) or either path cannot be resolved."""
+    import os
+
+    try:
+        return os.path.relpath(source.expanduser().resolve(), folder.expanduser().resolve())
+    except (ValueError, OSError):
+        return ""

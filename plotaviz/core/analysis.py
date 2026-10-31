@@ -10,6 +10,7 @@ is what makes type overrides and filter changes cheap.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,18 +25,24 @@ from .preprocess import (
     OUTLIER_ACTIONS,
     OUTLIER_METHODS,
     CoerceTypes,
+    ColumnFilter,
     Deduplicate,
     FillMissing,
     FlagOutliers,
+    JoinDataset,
     NormalizeColumnNames,
     Pipeline,
     PipelineResult,
+    QueryFilter,
     Step,
     default_pipeline,
 )
 from .profiler import DatasetProfile, profile
 from .session import Session
 from .spec import MATRIX_CHARTS, ChartSpec
+
+#: Largest cleaned frame kept in memory to make filter changes fast (bytes, shallow).
+CLEAN_CACHE_MAX_BYTES = 1_500_000_000
 
 #: Most charts a dashboard holds. Beyond this the tiles are too small to read.
 MAX_TILES = 12
@@ -82,6 +89,9 @@ class Analysis:
     _undo: list[_Snapshot] = field(default_factory=list, repr=False)
     _redo: list[_Snapshot] = field(default_factory=list, repr=False)
     dashboard: list[ChartSpec] = field(default_factory=list)
+    #: A custom ``rules.yaml`` (``--rules``); ``None`` uses the shipped one.
+    rules_path: str | None = None
+    _clean_cache: tuple[str, PipelineResult] | None = field(default=None, repr=False)
 
     # ------------------------------------------------------------------ construction
 
@@ -102,8 +112,13 @@ class Analysis:
             flag_outliers: Whether to add outlier flag columns.
             **load_kwargs: Passed through to :func:`plotaviz.core.loader.load`.
         """
+        rules_path = load_kwargs.pop("rules_path", None)
         load_result = loader.load(path, **load_kwargs)
-        analysis = cls(load_result=load_result, load_options=dict(load_kwargs.get("options") or {}))
+        analysis = cls(
+            load_result=load_result,
+            load_options=dict(load_kwargs.get("options") or {}),
+            rules_path=str(rules_path) if rules_path else None,
+        )
 
         # Profile the raw frame first so the pipeline knows which columns need coercing.
         analysis.inferred_types = _infer_types(load_result)
@@ -134,7 +149,7 @@ class Analysis:
         This is the single path for every state change: a type override, a new filter, a changed
         missing-value strategy. Replaying is cheap because steps are pure.
         """
-        result = self.pipeline.run(self.raw)
+        result = self._run_pipeline()
         if result.df.empty and self.pipeline.filters:
             raise PreprocessError(
                 "No rows match the current filters.",
@@ -147,11 +162,49 @@ class Analysis:
             total_rows=self.load_result.total_rows,
         )
         try:
-            self.recommendations = selector.ChartSelector().recommend(self.profile)
+            rules = selector.load_rules(self.rules_path) if self.rules_path else None
+            self.recommendations = selector.ChartSelector(rules).recommend(self.profile)
         except PlotaVizError:
             self.recommendations = []
         self._reconcile_spec()
         return self.result
+
+    def _run_pipeline(self) -> PipelineResult:
+        """Run the pipeline, reusing the cleaned frame when only the filters changed.
+
+        Cleaning (type coercion, deduplication, missing values, outliers) is the slow part on
+        large data, and a filter edit does not change it. The cleaned frame is cached against the
+        serialized cleaning steps, so a filter change replays only the filters. The result is
+        identical to a full run; any change to a cleaning step or type misses the cache.
+        """
+        steps = self.pipeline.steps
+        is_filter = [isinstance(s, (QueryFilter, ColumnFilter)) for s in steps]
+        first_filter = is_filter.index(True) if True in is_filter else len(steps)
+        if any(not f for f in is_filter[first_filter:]):
+            # A cleaning step after a filter (possible in a hand-edited session): no shortcut.
+            self._clean_cache = None
+            return self.pipeline.run(self.raw)
+
+        cleaning, filters = steps[:first_filter], steps[first_filter:]
+        key = json.dumps([s.to_dict() for s in cleaning], sort_keys=True, default=str)
+        if self._clean_cache is None or self._clean_cache[0] != key:
+            self._clean_cache = None  # release the old frame before building the new one
+            cleaned = Pipeline(cleaning).run(self.raw)
+            # Caching keeps one more full frame alive while filters are applied. Above the
+            # limit, memory matters more than filter speed: replay cleaning each time instead.
+            if int(cleaned.df.memory_usage(deep=False).sum()) <= CLEAN_CACHE_MAX_BYTES:
+                self._clean_cache = (key, cleaned)
+        else:
+            cleaned = self._clean_cache[1]
+        if not filters:
+            return cleaned
+        filtered = Pipeline(filters).run(cleaned.df)
+        return PipelineResult(
+            filtered.df,
+            [*cleaned.reports, *filtered.reports],
+            cleaned.rows_before,
+            filtered.rows_after,
+        )
 
     def _reconcile_spec(self) -> None:
         """Decide what the active chart is after a replay.
@@ -206,6 +259,91 @@ class Analysis:
         """
         return self._transaction(lambda: self.pipeline.replace_filters(filters))
 
+    def unfiltered_profile(self) -> DatasetProfile | None:
+        """Profile of the cleaned data before filters — what filter widgets should span."""
+        if not self.pipeline.filters:
+            return self.profile
+        cleaned = self._clean_cache[1].df if self._clean_cache else None
+        if cleaned is None:
+            steps = [
+                s for s in self.pipeline.steps if not isinstance(s, (QueryFilter, ColumnFilter))
+            ]
+            cleaned = Pipeline(steps).run(self.raw).df
+        return profile(cleaned, overrides=self.type_overrides)
+
+    def join_base(self) -> pd.DataFrame:
+        """The frame a new join would apply to: renamed, with earlier joins, before any
+        coercion, cleaning, or filtering. The join dialog previews matches against this."""
+        return Pipeline(self.pipeline.steps[: self._join_insert_index()]).run(self.raw).df
+
+    def _join_insert_index(self) -> int:
+        """Where a new join goes: after renaming and after every earlier join, so a second
+        join can use columns the first one added."""
+        index = _after_rename(self.pipeline)
+        for position, step in enumerate(self.pipeline.steps):
+            if isinstance(step, JoinDataset):
+                index = max(index, position + 1)
+        return index
+
+    def _renames_columns(self) -> bool:
+        rename = next((s for s in self.pipeline if isinstance(s, NormalizeColumnNames)), None)
+        return bool(rename and rename.enabled)
+
+    def join_dataset(
+        self,
+        path: str | Path,
+        on: list[str],
+        *,
+        how: str = "left",
+        options: dict[str, Any] | None = None,
+    ) -> PipelineResult:
+        """Bring in columns from another file, matched on ``on``. Undoable.
+
+        The join runs after column renaming (and after earlier joins), before type coercion,
+        so the joined columns are typed like the rest; their roles are inferred from the second
+        file. Missing-value handling keeps to the main data's columns, so a left join's
+        unmatched rows are never dropped or filled with invented lookup values.
+
+        Raises:
+            LoadError: If the second file cannot be read.
+            PreprocessError: If a key is not in both datasets.
+        """
+        source = Path(path).expanduser().resolve()
+        step = JoinDataset(
+            str(source),
+            list(on),
+            how=how,
+            read_options=options,
+            normalize=self._renames_columns(),
+        )
+        other = step.other()  # read (and hash) it now, so a bad file fails before any change
+
+        before = set(self.join_base().columns)
+        new_types = {
+            (f"{name}{step.suffix}" if name in before else name): prof.role
+            for name, prof in profile(other).columns.items()
+            if name not in on
+        }
+        main_columns = self._main_columns()
+
+        def change() -> None:
+            self.pipeline.steps.insert(self._join_insert_index(), step)
+            for name, role in new_types.items():
+                self.inferred_types.setdefault(name, role)
+            coerce = next((s for s in self.pipeline if isinstance(s, CoerceTypes)), None)
+            if coerce is not None:
+                for name, role in new_types.items():
+                    coerce.types.setdefault(name, role)
+            _restrict_fill(self.pipeline, main_columns)
+
+        return self._transaction(change)
+
+    def _main_columns(self) -> list[str]:
+        """The main dataset's own column names (after renaming), without joined columns."""
+        rename = next((s for s in self.pipeline if isinstance(s, NormalizeColumnNames)), None)
+        head = self.raw.head(0)
+        return list(rename.apply(head)[0].columns if rename else head.columns)
+
     def set_cleaning(
         self,
         *,
@@ -250,13 +388,16 @@ class Analysis:
                 )
             )
 
+        main_columns = self._main_columns()
+
         def change() -> None:
             kept = [s for s in self.pipeline.steps if not isinstance(s, _CLEANING_STEPS)]
             at = 0
             for index, step in enumerate(kept):
-                if isinstance(step, (NormalizeColumnNames, CoerceTypes)):
+                if isinstance(step, (NormalizeColumnNames, CoerceTypes, JoinDataset)):
                     at = index + 1
             self.pipeline.steps = kept[:at] + cleaning + kept[at:]
+            _restrict_fill(self.pipeline, main_columns)
 
         return self._transaction(change)
 
@@ -592,6 +733,20 @@ def _infer_types(load_result: loader.LoadResult) -> dict[str, str]:
     """Inferred roles for the raw frame, keyed by the names the pipeline will produce."""
     raw_profile = profile(load_result.df, total_rows=load_result.total_rows)
     return _normalized_types({name: prof.role for name, prof in raw_profile.columns.items()})
+
+
+def _restrict_fill(pipeline: Pipeline, main_columns: list[str]) -> None:
+    """With a join present, limit missing-value handling to the main data's columns.
+
+    A left join leaves unmatched rows empty in the joined columns. ``drop`` would delete
+    exactly those rows (turning the join into an inner join) and imputation would invent lookup
+    values for them, so joined columns are left as they are.
+    """
+    if not any(isinstance(s, JoinDataset) for s in pipeline):
+        return
+    for step in pipeline:
+        if isinstance(step, FillMissing) and step.columns is None:
+            step.columns = list(main_columns)
 
 
 def _after_rename(pipeline: Pipeline) -> int:

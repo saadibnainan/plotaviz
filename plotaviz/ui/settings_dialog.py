@@ -11,8 +11,11 @@ and the Ollama path skips the question entirely because nothing leaves the machi
 
 from __future__ import annotations
 
+from typing import Any
+
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -22,23 +25,28 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
+from ..core.errors import PlotaVizError
 from ..core.llm import (
     CONSENT_TEXT,
     PROVIDERS,
-    OllamaProvider,
     delete_api_key,
     get_api_key,
+    get_provider,
     set_api_key,
 )
 from ..core.llm.ollama import DEFAULT_HOST, is_loopback
 from ..core.loader import DEFAULT_LARGE_FILE_MB
 from ..core.plotter import MAX_POINTS
+from ..core.profiler import DatasetProfile
+from ..core.spec import ChartSpec
+from .workers import TaskRunner
 
 #: Placeholder shown when a key is already in the keyring. The real value is never displayed.
 _STORED_PLACEHOLDER = "•" * 24
@@ -59,8 +67,18 @@ class SettingsDialog(QDialog):
         settings: The app's ``QSettings``. Non-secret preferences are stored here; keys are not.
     """
 
-    def __init__(self, parent: QWidget | None = None, *, settings: QSettings | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        settings: QSettings | None = None,
+        profile: DatasetProfile | None = None,
+        candidates: list[ChartSpec] | None = None,
+    ) -> None:
         super().__init__(parent)
+        self._profile = profile
+        self._candidates = list(candidates or [])
+        self._runner = TaskRunner(self)
         self.setWindowTitle("PlotaViz settings")
         self.setMinimumWidth(560)
         self._settings = settings or QSettings("plotaviz", "plotaviz")
@@ -134,9 +152,19 @@ class SettingsDialog(QDialog):
         self.status_label.setWordWrap(True)
         llm_form.addRow("", self.status_label)
 
-        test_button = QPushButton("Test connection", llm_box)
-        test_button.clicked.connect(self._test_connection)
-        llm_form.addRow("", test_button)
+        self.test_button = QPushButton("Check key / connection", llm_box)
+        self.test_button.setToolTip("Lists the models this key can use. No data is sent.")
+        self.test_button.clicked.connect(self._test_connection)
+        self.preview_button = QPushButton("Preview what will be sent…", llm_box)
+        self.preview_button.clicked.connect(self._preview_payload)
+        self.preview_button.setEnabled(profile is not None)
+        if profile is None:
+            self.preview_button.setToolTip("Open a dataset to see its exact request.")
+        buttons_row = QHBoxLayout()
+        buttons_row.addWidget(self.test_button)
+        buttons_row.addWidget(self.preview_button)
+        buttons_row.addStretch(1)
+        llm_form.addRow("", buttons_row)
 
         layout.addWidget(llm_box)
 
@@ -327,40 +355,105 @@ class SettingsDialog(QDialog):
         self.status_label.setStyleSheet("color: palette(mid); font-size: 11px;")
 
     def _test_connection(self) -> None:
-        """Check the provider looks usable without sending any data."""
-        provider = str(self.provider_combo.currentData() or "")
-        if not provider:
-            self.status_label.setText(
-                "No provider selected — the local engine is always available."
-            )
-            self.status_label.setStyleSheet("color: palette(mid); font-size: 11px;")
-            return
+        """Really check the provider: list its models. Nothing about the data is sent.
 
-        if provider == "ollama":
-            client = OllamaProvider(host=self.host_edit.text().strip() or DEFAULT_HOST)
-            if client.is_running():
-                models = client.list_models()
-                listed = ", ".join(models[:5]) if models else "no models pulled yet"
-                self.status_label.setText(f"Ollama is running. Models: {listed}")
-                self.status_label.setStyleSheet("color: #1F7A5C; font-size: 11px;")
-            else:
-                self.status_label.setText(
-                    f"No Ollama server answered at {client.host}. Start it with `ollama serve`."
-                )
-                self.status_label.setStyleSheet("color: #C0392B; font-size: 11px;")
+        Runs on a worker so a slow or unreachable endpoint cannot freeze the dialog. On success
+        the model box is filled with the models this key can actually use.
+        """
+        provider_name = str(self.provider_combo.currentData() or "")
+        if not provider_name:
+            self._status("No provider selected — the local engine is always available.", "mid")
             return
-
         typed = self.key_edit.text().strip()
-        has_key = bool(typed and typed != _STORED_PLACEHOLDER) or bool(get_api_key(provider))
-        if has_key:
-            self.status_label.setText(
-                "A key is available. It is checked for real the first time you ask for a "
-                "suggestion."
+        kwargs: dict[str, Any] = {}
+        if provider_name == "ollama":
+            kwargs["host"] = self.host_edit.text().strip() or DEFAULT_HOST
+        elif typed and typed != _STORED_PLACEHOLDER:
+            kwargs["api_key"] = typed  # check the key as typed, before it is saved
+        try:
+            provider = get_provider(provider_name, **kwargs)
+        except PlotaVizError as exc:
+            self._status(exc.message, "error")
+            return
+        if self._runner.busy:
+            return
+        self.test_button.setEnabled(False)
+        self._status("Checking… (lists the available models; no data is sent)", "mid")
+        self._runner.start(
+            provider.check_key,
+            on_finished=lambda result: self._on_checked(result, provider_name),
+            on_failed=lambda message, _trace: self._on_checked((False, message, []), provider_name),
+        )
+
+    def done(self, result: int) -> None:
+        """Close at once, even while a key check is still waiting on the network.
+
+        Waiting would freeze the whole app for as long as a slow endpoint takes. Instead the
+        check is detached: its callbacks are dropped (they would touch this dialog's deleted
+        widgets) and its runner is handed to the application so the thread can finish safely.
+        """
+        if self._runner.busy:
+            self._runner._on_finished = None
+            self._runner._on_failed = None
+            self._runner.setParent(QApplication.instance())
+        super().done(result)
+
+    def _on_checked(self, result: tuple[bool, str, list[str]], provider_name: str) -> None:
+        ok, message, models = result
+        self.test_button.setEnabled(True)
+        if provider_name != str(self.provider_combo.currentData() or ""):
+            # The user switched provider while the check ran: report it, but never put one
+            # provider's models into another provider's list.
+            self._status(f"(Result for {provider_name}) {message}", "ok" if ok else "error")
+            return
+        self._status(message, "ok" if ok else "error")
+        if ok and models:
+            current = self.model_combo.currentText()
+            self.model_combo.clear()
+            self.model_combo.addItems(models)
+            self.model_combo.setCurrentText(current)
+
+    def _status(self, text: str, tone: str) -> None:
+        colours = {"ok": "#1F7A5C", "error": "#C0392B", "warn": "#A8681F"}
+        colour = colours.get(tone, "palette(mid)")
+        self.status_label.setText(text)
+        self.status_label.setStyleSheet(f"color: {colour}; font-size: 11px;")
+
+    def _preview_payload(self) -> None:
+        """Show exactly what a request would send for the open dataset."""
+        if self._profile is None:
+            return
+        from ..core.llm.base import _SYSTEM_PROMPT, build_prompt
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("What PlotaViz would send")
+        dialog.resize(760, 620)
+        layout = QVBoxLayout(dialog)
+        note = QLabel(
+            "These are the complete requests for the open dataset. A question you type in the "
+            "query bar is appended at the end of the first; the second-opinion request sends the "
+            "second. Nothing else is sent.",
+            dialog,
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        text = QPlainTextEdit(dialog)
+        text.setReadOnly(True)
+        sections = [
+            "=== Instructions (system prompt, sent with every request) ===\n" + _SYSTEM_PROMPT,
+            "=== Query-bar request ===\n" + build_prompt(self._profile),
+        ]
+        if self._candidates:
+            sections.append(
+                "=== Second-opinion request (includes the local engine's top candidates) ===\n"
+                + build_prompt(self._profile, candidates=self._candidates)
             )
-            self.status_label.setStyleSheet("color: #1F7A5C; font-size: 11px;")
-        else:
-            self.status_label.setText("No API key for this provider yet.")
-            self.status_label.setStyleSheet("color: #C0392B; font-size: 11px;")
+        text.setPlainText("\n\n".join(sections))
+        layout.addWidget(text, stretch=1)
+        close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dialog)
+        close.rejected.connect(dialog.reject)
+        layout.addWidget(close)
+        dialog.exec()
 
     # ------------------------------------------------------------------ results
 

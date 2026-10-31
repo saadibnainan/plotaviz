@@ -18,6 +18,30 @@ class GeminiProvider(Provider):
     default_model = "gemini-3.5-flash"
     available_models = ("gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite")
 
+    def list_models(self) -> list[str]:
+        """Model IDs from the models endpoint; sends no dataset information."""
+        try:
+            from google import genai
+        except ImportError as exc:
+            raise LLMError(
+                "The Gemini provider needs the google-genai package.",
+                hint='Install it with: pip install "plotaviz[llm]"',
+            ) from exc
+        from google.genai import types
+
+        client = genai.Client(
+            api_key=self.require_key(),
+            http_options=types.HttpOptions(timeout=int(self.timeout * 1000)),
+        )
+        try:
+            names = [str(model.name or "") for model in client.models.list()]
+        except Exception as exc:
+            message = str(exc)
+            if "API key" in message or "PERMISSION_DENIED" in message:
+                raise LLMError("Google rejected the API key.") from exc
+            raise LLMError("Could not reach Google.", hint=redact(message)) from exc
+        return sorted(name.removeprefix("models/") for name in names if name)
+
     def complete(self, system: str, user: str, *, timeout: float) -> str:
         """Send one message and return the text of the reply."""
         try:

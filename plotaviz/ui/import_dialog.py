@@ -115,8 +115,11 @@ class ImportDialog(QDialog):
         self.excel_box = QGroupBox("Workbook", self)
         excel_form = QFormLayout(self.excel_box)
         self.sheet_combo = QComboBox(self.excel_box)
-        for name in _sheet_names(self.path) if self.is_excel else []:
+        names = _sheet_names(self.path) if self.is_excel else []
+        for name in names:
             self.sheet_combo.addItem(name, name)
+        if len(names) > 1:
+            self.sheet_combo.addItem("All sheets, stacked (adds a 'sheet' column)", "*")
         excel_form.addRow("Sheet", self.sheet_combo)
         layout.addWidget(self.excel_box)
 
