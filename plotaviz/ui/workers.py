@@ -187,7 +187,11 @@ class TaskRunner(QObject):
         worker.progress.connect(self._relay_progress)
 
         worker.done.connect(thread.quit)
-        worker.done.connect(worker.deleteLater)
+        # The worker is NOT deleteLater()'d on its own thread. Its Python wrapper would then be
+        # destroyed there, taking the GIL while the UI thread may be inside a Qt call that has
+        # released the GIL and needs it back for a Python slot — an intermittent deadlock seen
+        # in testing. Instead the UI thread drops its reference in _clear(), after the thread has
+        # stopped, which is when Qt allows deleting an object of a finished thread.
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._clear)
 
