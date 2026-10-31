@@ -168,6 +168,114 @@ def generate(
     return "\n".join(lines) + "\n"
 
 
+def generate_dashboard(
+    specs: list[ChartSpec],
+    pipeline: Pipeline,
+    source_path: str | Path,
+    *,
+    flavour: str = "matplotlib",
+    version: str = "0.1.0",
+    read_options: dict[str, Any] | None = None,
+) -> str:
+    """Emit one standalone script that reproduces every dashboard tile.
+
+    The data is loaded and cleaned once; each tile gets its own ``build_chart_<n>`` function, so
+    the script reads like the single-chart one. ``--save-dir`` writes ``chart_1.png``,
+    ``chart_2.png``… (``.html`` for the Plotly flavour).
+
+    Raises:
+        ExportError: If ``flavour`` is unknown or ``specs`` is empty.
+    """
+    if flavour not in FLAVOURS:
+        raise ExportError(
+            f"Unknown code flavour {flavour!r}.", hint=f"Choose one of: {', '.join(FLAVOURS)}."
+        )
+    if not specs:
+        raise ExportError("The dashboard has no charts.", hint="Pin a chart first.")
+    for spec in specs:
+        spec.validate()
+
+    titles = "; ".join(spec.display_title() for spec in specs)
+    lines: list[str] = [
+        _HEADER.format(
+            title=_docstring_safe(f"Dashboard of {len(specs)} charts: {titles}"),
+            version=version,
+            timestamp=datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
+            filename="dashboard.py",
+            requirements="pandas, numpy, "
+            + ("matplotlib" if flavour == "matplotlib" else "plotly"),
+        ),
+        "from pathlib import Path",
+        "",
+        "import numpy as np",
+        "import pandas as pd",
+    ]
+    if flavour == "matplotlib":
+        lines.append("import matplotlib.pyplot as plt")
+    else:
+        lines += ["import plotly.express as px", "import plotly.graph_objects as go"]
+
+    lines += [
+        "",
+        "",
+        "def load():",
+        '    """Read the source dataset."""',
+        f"    return {read_code_for(Path(source_path), read_options)}",
+        "",
+        "",
+        "def preprocess(df):",
+        '    """Replay the exact cleaning steps PlotaViz applied."""',
+    ]
+    step_code = pipeline.to_code()
+    lines += [f"    {line}" if line else "" for line in step_code] or [
+        "    # No cleaning steps were applied."
+    ]
+    lines += ["    return df", "", ""]
+    if any(spec.chart not in MATRIX_CHARTS and (spec.x or spec.color) for spec in specs):
+        lines += _CAP_HELPER
+
+    for number, spec in enumerate(specs, start=1):
+        chart = _chart_function(spec, flavour)
+        chart[0] = f"def build_chart_{number}(df):"
+        lines += [*chart, "", ""]
+
+    names = ", ".join(f"build_chart_{n}" for n in range(1, len(specs) + 1))
+    suffix = "png" if flavour == "matplotlib" else "html"
+    lines += [
+        f"CHARTS = [{names}]",
+        "",
+        "",
+        'if __name__ == "__main__":',
+        "    parser = argparse.ArgumentParser(description=__doc__)",
+        "    parser.add_argument('--save-dir', default=None, "
+        f"help='write chart_1.{suffix}, chart_2.{suffix}, ... into this folder')",
+        "    parser.add_argument('--no-show', action='store_true', help='do not open windows')",
+        "    args = parser.parse_args()",
+        "",
+        "    df = preprocess(load())",
+        "    for number, build in enumerate(CHARTS, start=1):",
+        "        fig = build(df)",
+        "        if args.save_dir:",
+        "            Path(args.save_dir).mkdir(parents=True, exist_ok=True)",
+        f"            target = Path(args.save_dir) / f'chart_{{number}}.{suffix}'",
+    ]
+    if flavour == "matplotlib":
+        lines += [
+            "            fig.savefig(target, dpi=200, bbox_inches='tight')",
+            "            print(f'Saved {target}')",
+            "    if not args.no_show:",
+            "        plt.show()",
+        ]
+    else:
+        lines += [
+            "            fig.write_html(target)",
+            "            print(f'Saved {target}')",
+            "        if not args.no_show:",
+            "            fig.show()",
+        ]
+    return "\n".join(lines) + "\n"
+
+
 def _chart_function(spec: ChartSpec, flavour: str) -> list[str]:
     """Emit the ``build_chart`` function body for one spec and flavour.
 

@@ -68,6 +68,13 @@ def build_parser() -> argparse.ArgumentParser:
     chart.add_argument("--y", help="column for the y axis")
     chart.add_argument("--color", help="column to split series by")
     chart.add_argument("--agg", help="aggregation: sum, mean, median, min, max, count, nunique")
+    chart.add_argument(
+        "--dashboard",
+        type=int,
+        metavar="N",
+        help="pin the top N recommendations and export them together "
+        "(--export: one grid image/PDF or HTML page; --export-code: one script)",
+    )
 
     cleaning = parser.add_argument_group("cleaning")
     cleaning.add_argument(
@@ -131,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         or args.chart
         or args.x
         or args.y
+        or args.dashboard
     )
     if not headless:
         return _run_gui(args.file)
@@ -191,6 +199,9 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         if args.recommend:
             _print_recommendations(analysis, as_json=args.json)
             return 0
+
+        if args.dashboard:
+            return _run_dashboard(analysis, args, parser)
 
         # --- choose a chart
         if args.chart:
@@ -266,6 +277,51 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         logger.debug("Unhandled error", exc_info=True)
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+
+def _run_dashboard(
+    analysis: object, args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    """Pin the top N recommendations and write them as one dashboard."""
+    from .core.analysis import MAX_TILES, Analysis
+    from .core.exporter import ExportOptions, export_dashboard_html, export_dashboard_image
+
+    assert isinstance(analysis, Analysis)
+    if not 1 <= args.dashboard <= MAX_TILES:
+        parser.error(f"--dashboard must be between 1 and {MAX_TILES} (got {args.dashboard})")
+    if not (args.export or args.export_code):
+        parser.error("--dashboard needs --export and/or --export-code")
+    for spec in analysis.recommendations[: args.dashboard]:
+        analysis.pin(spec)
+    if not analysis.dashboard:
+        print("error: there are no recommendations to put on a dashboard.", file=sys.stderr)
+        return 1
+    if not args.quiet:
+        for number, spec in enumerate(analysis.dashboard, start=1):
+            print(f"Tile {number}: {spec.chart}  x={spec.x}  y={spec.y}", file=sys.stderr)
+
+    if args.export:
+        target = Path(args.export)
+        if target.suffix.lower() == ".html":
+            written = export_dashboard_html(analysis.df, analysis.dashboard, target)
+        else:
+            width, height = _parse_size(args.size, parser) if args.size != "10x6" else (6.0, 4.0)
+            written = export_dashboard_image(
+                analysis.df,
+                analysis.dashboard,
+                target,
+                options=ExportOptions(dpi=args.dpi, width=width, height=height),
+            )
+        print(written)
+    if args.export_code:
+        from .core import codegen
+
+        print(
+            codegen.write(
+                args.export_code, analysis.generate_dashboard_code(flavour=args.code_flavour)
+            )
+        )
+    return 0
 
 
 def _parse_size(text: str, parser: argparse.ArgumentParser) -> tuple[float, float]:

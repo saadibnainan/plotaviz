@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .errors import PlotError
+from .errors import PlotaVizError, PlotError
 from .profiler import DERIVED_SUFFIXES, as_float, infer_role
 from .spec import MATRIX_CHARTS, ChartSpec
 
@@ -663,7 +663,6 @@ def build_matplotlib(
 
     data = prepared or prepare(df, spec)
     frame, spec = data.df, data.spec
-    opts = spec.options
     chart = spec.chart
 
     try:
@@ -673,92 +672,7 @@ def build_matplotlib(
             return fig
 
         fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
-        sequence = palette_for(spec)
-        if sequence:
-            ax.set_prop_cycle(color=sequence)
-
-        if chart == "histogram":
-            ax.hist(
-                pd.to_numeric(frame[spec.x], errors="coerce").dropna(),
-                bins=opts.get("bins", "auto"),
-                color=primary_color(spec),
-                edgecolor="white",
-            )
-            ax.set_xlabel(str(spec.x))
-            ax.set_ylabel("count")
-        elif chart == "kde":
-            grid, density = kde_curve(frame[spec.x])
-            ax.plot(grid, density, color=primary_color(spec))
-            ax.fill_between(grid, density, alpha=0.3, color=primary_color(spec))
-            ax.set_xlabel(str(spec.x))
-            ax.set_ylabel("density")
-        elif chart in {"bar", "grouped_bar", "stacked_bar"}:
-            _mpl_bar(ax, frame, spec, stacked=chart == "stacked_bar" or bool(opts.get("stacked")))
-        elif chart == "pie":
-            values = frame[spec.y] if spec.y and spec.y in frame else frame.iloc[:, -1]
-            ax.pie(
-                values,
-                labels=frame[spec.x].astype(str).tolist(),
-                autopct="%1.1f%%",
-                colors=sequence,
-            )
-            ax.set_ylabel("")
-        elif chart == "treemap":
-            _mpl_treemap(ax, frame, spec)
-        elif chart == "scatter":
-            _mpl_scatter(ax, frame, spec)
-        elif chart in {"line", "area"}:
-            _mpl_line(ax, frame, spec, area=chart == "area")
-        elif chart in {"box", "violin"}:
-            _mpl_distribution(ax, frame, spec, violin=chart == "violin")
-        elif chart == "heatmap":
-            value = spec.color if spec.color in frame.columns else frame.columns[-1]
-            matrix = frame.pivot_table(index=spec.y, columns=spec.x, values=value, aggfunc="mean")
-            image = ax.imshow(
-                matrix.to_numpy(dtype=float),
-                aspect="auto",
-                cmap="cividis" if sequence else "viridis",
-            )
-            ax.set_xticks(
-                range(len(matrix.columns)),
-                [str(c) for c in matrix.columns],
-                rotation=45,
-                ha="right",
-            )
-            ax.set_yticks(range(len(matrix.index)), [str(i) for i in matrix.index])
-            fig.colorbar(image, ax=ax, label=str(value))
-        elif chart == "correlation_heatmap":
-            corr = frame.corr(numeric_only=True)
-            image = ax.imshow(corr.to_numpy(dtype=float), vmin=-1, vmax=1, cmap="RdBu_r")
-            ax.set_xticks(range(len(corr.columns)), list(corr.columns), rotation=45, ha="right")
-            ax.set_yticks(range(len(corr.index)), list(corr.index))
-            if corr.size <= 100:
-                for i in range(len(corr.index)):
-                    for j in range(len(corr.columns)):
-                        r = as_float(corr.iat[i, j])
-                        label = "" if r is None else f"{r:.2f}"
-                        ax.text(j, i, label, ha="center", va="center", fontsize=8)
-            fig.colorbar(image, ax=ax, label="Pearson r")
-        else:  # pragma: no cover
-            raise PlotError(f"No matplotlib renderer for chart type {chart!r}.")
-
-        if opts.get("log_y"):
-            ax.set_yscale("log")
-        if opts.get("log_x"):
-            ax.set_xscale("log")
-
-        ax.set_title(spec.display_title())
-        if chart not in {"pie", "treemap", "heatmap", "correlation_heatmap"}:
-            if spec.x:
-                ax.set_xlabel(str(spec.x))
-            if spec.y and chart not in {"histogram", "kde"}:
-                ax.set_ylabel(str(spec.y))
-            ax.grid(True, alpha=0.25, linestyle="--")
-            ax.set_axisbelow(True)
-        if opts.get("x_label"):
-            ax.set_xlabel(str(opts["x_label"]))
-        if opts.get("y_label"):
-            ax.set_ylabel(str(opts["y_label"]))
+        _draw_into(fig, ax, data)
 
         if data.sampled:
             fig.text(0.01, 0.01, data.sampling_notice, fontsize=8, color="#666")
@@ -769,6 +683,104 @@ def build_matplotlib(
         raise
     except Exception as exc:
         raise PlotError(f"Could not draw the {spec.chart} chart.", hint=str(exc)) from exc
+
+
+def _draw_into(fig: Any, ax: Any, data: PreparedData) -> None:
+    """Draw one prepared chart onto an existing axes.
+
+    The single-chart export and the dashboard grid both go through here, so a tile looks exactly
+    like the same chart exported on its own. Pair plots need a grid of axes and are handled by
+    the callers.
+    """
+    frame, spec = data.df, data.spec
+    opts = spec.options
+    chart = spec.chart
+    sequence = palette_for(spec)
+    if sequence:
+        ax.set_prop_cycle(color=sequence)
+
+    if chart == "histogram":
+        ax.hist(
+            pd.to_numeric(frame[spec.x], errors="coerce").dropna(),
+            bins=opts.get("bins", "auto"),
+            color=primary_color(spec),
+            edgecolor="white",
+        )
+        ax.set_xlabel(str(spec.x))
+        ax.set_ylabel("count")
+    elif chart == "kde":
+        grid, density = kde_curve(frame[spec.x])
+        ax.plot(grid, density, color=primary_color(spec))
+        ax.fill_between(grid, density, alpha=0.3, color=primary_color(spec))
+        ax.set_xlabel(str(spec.x))
+        ax.set_ylabel("density")
+    elif chart in {"bar", "grouped_bar", "stacked_bar"}:
+        _mpl_bar(ax, frame, spec, stacked=chart == "stacked_bar" or bool(opts.get("stacked")))
+    elif chart == "pie":
+        values = frame[spec.y] if spec.y and spec.y in frame else frame.iloc[:, -1]
+        ax.pie(
+            values,
+            labels=frame[spec.x].astype(str).tolist(),
+            autopct="%1.1f%%",
+            colors=sequence,
+        )
+        ax.set_ylabel("")
+    elif chart == "treemap":
+        _mpl_treemap(ax, frame, spec)
+    elif chart == "scatter":
+        _mpl_scatter(ax, frame, spec)
+    elif chart in {"line", "area"}:
+        _mpl_line(ax, frame, spec, area=chart == "area")
+    elif chart in {"box", "violin"}:
+        _mpl_distribution(ax, frame, spec, violin=chart == "violin")
+    elif chart == "heatmap":
+        value = spec.color if spec.color in frame.columns else frame.columns[-1]
+        matrix = frame.pivot_table(index=spec.y, columns=spec.x, values=value, aggfunc="mean")
+        image = ax.imshow(
+            matrix.to_numpy(dtype=float),
+            aspect="auto",
+            cmap="cividis" if sequence else "viridis",
+        )
+        ax.set_xticks(
+            range(len(matrix.columns)),
+            [str(c) for c in matrix.columns],
+            rotation=45,
+            ha="right",
+        )
+        ax.set_yticks(range(len(matrix.index)), [str(i) for i in matrix.index])
+        fig.colorbar(image, ax=ax, label=str(value))
+    elif chart == "correlation_heatmap":
+        corr = frame.corr(numeric_only=True)
+        image = ax.imshow(corr.to_numpy(dtype=float), vmin=-1, vmax=1, cmap="RdBu_r")
+        ax.set_xticks(range(len(corr.columns)), list(corr.columns), rotation=45, ha="right")
+        ax.set_yticks(range(len(corr.index)), list(corr.index))
+        if corr.size <= 100:
+            for i in range(len(corr.index)):
+                for j in range(len(corr.columns)):
+                    r = as_float(corr.iat[i, j])
+                    label = "" if r is None else f"{r:.2f}"
+                    ax.text(j, i, label, ha="center", va="center", fontsize=8)
+        fig.colorbar(image, ax=ax, label="Pearson r")
+    else:  # pragma: no cover
+        raise PlotError(f"No matplotlib renderer for chart type {chart!r}.")
+
+    if opts.get("log_y"):
+        ax.set_yscale("log")
+    if opts.get("log_x"):
+        ax.set_xscale("log")
+
+    ax.set_title(spec.display_title())
+    if chart not in {"pie", "treemap", "heatmap", "correlation_heatmap"}:
+        if spec.x:
+            ax.set_xlabel(str(spec.x))
+        if spec.y and chart not in {"histogram", "kde"}:
+            ax.set_ylabel(str(spec.y))
+        ax.grid(True, alpha=0.25, linestyle="--")
+        ax.set_axisbelow(True)
+    if opts.get("x_label"):
+        ax.set_xlabel(str(opts["x_label"]))
+    if opts.get("y_label"):
+        ax.set_ylabel(str(opts["y_label"]))
 
 
 def _mpl_bar(ax: Any, frame: pd.DataFrame, spec: ChartSpec, *, stacked: bool) -> None:
@@ -830,7 +842,11 @@ def _mpl_line(ax: Any, frame: pd.DataFrame, spec: ChartSpec, *, area: bool) -> N
         if area:
             ax.fill_between(ordered[x], ordered[y], alpha=0.3, color=primary_color(spec))
     if pd.api.types.is_datetime64_any_dtype(frame[x]):
-        ax.figure.autofmt_xdate()
+        # Rotate this axes' dates only. Figure.autofmt_xdate() assumes a shared x axis and hides
+        # the date labels of every subplot above the bottom row — wrong on a dashboard grid.
+        for label in ax.get_xticklabels():
+            label.set_rotation(30)
+            label.set_horizontalalignment("right")
 
 
 def _mpl_distribution(ax: Any, frame: pd.DataFrame, spec: ChartSpec, *, violin: bool) -> None:
@@ -927,12 +943,20 @@ def _mpl_pair_plot(
     """Scatter-matrix of up to five numeric columns, histograms on the diagonal."""
     import matplotlib.pyplot as plt
 
+    fig = plt.figure(figsize=figsize, dpi=dpi)
+    _draw_pair_plot(fig, fig.add_gridspec(1, 1)[0, 0], frame, color=color)
+    fig.tight_layout()
+    return fig
+
+
+def _draw_pair_plot(fig: Any, cell: Any, frame: pd.DataFrame, *, color: str) -> None:
+    """Draw a pair plot into one grid cell — a whole figure, or one dashboard tile."""
     cols = list(frame.columns)[:PAIR_PLOT_MAX_COLUMNS]
     n = len(cols)
-    fig, axes = plt.subplots(n, n, figsize=figsize, dpi=dpi, squeeze=False)
+    grid = cell.subgridspec(n, n)
     for i, row_col in enumerate(cols):
         for j, col_col in enumerate(cols):
-            ax = axes[i][j]
+            ax = fig.add_subplot(grid[i, j])
             if i == j:
                 ax.hist(frame[row_col].dropna(), bins=20, color=color, edgecolor="white")
             else:
@@ -942,5 +966,86 @@ def _mpl_pair_plot(
             if j == 0:
                 ax.set_ylabel(str(row_col), fontsize=8)
             ax.tick_params(labelsize=6)
-    fig.tight_layout()
+
+
+#: Downsampling threshold per dashboard tile — a tile is small, and there are several of them.
+TILE_MAX_POINTS = 20_000
+
+
+def build_matplotlib_grid(
+    df: pd.DataFrame,
+    specs: list[ChartSpec],
+    *,
+    columns: int = 2,
+    tile_size: tuple[float, float] = (6.0, 4.0),
+    dpi: int = 150,
+    title: str | None = None,
+    max_points: int = TILE_MAX_POINTS,
+) -> Any:
+    """Draw several charts as one figure — the dashboard export and the dashboard view.
+
+    Each chart is prepared and drawn exactly as on its own (:func:`_draw_into`). A chart that
+    cannot be drawn on the current data shows the reason in its cell instead of breaking the rest.
+
+    Args:
+        df: Cleaned, filtered data.
+        specs: Charts in tile order.
+        columns: Tiles per row.
+        tile_size: Size of one tile in inches.
+        dpi: Resolution.
+        title: Optional heading for the whole figure.
+        max_points: Downsampling threshold per tile.
+
+    Raises:
+        PlotError: If ``specs`` is empty.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg", force=False)
+    import math
+
+    import matplotlib.pyplot as plt
+
+    if not specs:
+        raise PlotError("The dashboard has no charts.", hint="Pin a chart to the dashboard first.")
+    columns = max(1, min(int(columns), len(specs)))
+    rows = math.ceil(len(specs) / columns)
+    fig = plt.figure(
+        figsize=(tile_size[0] * columns, tile_size[1] * rows), dpi=dpi, layout="constrained"
+    )
+    grid = fig.add_gridspec(rows, columns)
+    for index, spec in enumerate(specs):
+        cell = grid[index // columns, index % columns]
+        try:
+            data = prepare(df, spec, max_points=max_points)
+            if data.spec.chart == "pair_plot":
+                _draw_pair_plot(fig, cell, data.df, color=primary_color(data.spec))
+                continue
+            ax = fig.add_subplot(cell)
+            _draw_into(fig, ax, data)
+            if data.sampled:
+                ax.text(
+                    0.0,
+                    -0.18,
+                    data.sampling_notice,
+                    transform=ax.transAxes,
+                    fontsize=7,
+                    color="#666",
+                )
+        except Exception as exc:  # one bad tile must not take the dashboard down
+            ax = fig.add_subplot(cell)
+            ax.axis("off")
+            message = exc.message if isinstance(exc, PlotaVizError) else str(exc)
+            ax.text(
+                0.5,
+                0.5,
+                f"{spec.display_title()}\n\n{message}",
+                ha="center",
+                va="center",
+                wrap=True,
+                fontsize=9,
+                color="#A33",
+            )
+    if title:
+        fig.suptitle(title)
     return fig

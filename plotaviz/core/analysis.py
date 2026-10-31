@@ -18,7 +18,7 @@ from typing import Any
 import pandas as pd
 
 from . import codegen, exporter, loader, plotter, selector
-from .errors import PlotaVizError, PreprocessError
+from .errors import PlotaVizError, PreprocessError, SpecError
 from .preprocess import (
     MISSING_CHOICES,
     OUTLIER_ACTIONS,
@@ -36,6 +36,9 @@ from .preprocess import (
 from .profiler import DatasetProfile, profile
 from .session import Session
 from .spec import MATRIX_CHARTS, ChartSpec
+
+#: Most charts a dashboard holds. Beyond this the tiles are too small to read.
+MAX_TILES = 12
 
 #: Undo depth. Each entry is a serialized step list, so this is cheap even for large data.
 MAX_UNDO = 50
@@ -78,6 +81,7 @@ class Analysis:
     load_options: dict[str, Any] = field(default_factory=dict)
     _undo: list[_Snapshot] = field(default_factory=list, repr=False)
     _redo: list[_Snapshot] = field(default_factory=list, repr=False)
+    dashboard: list[ChartSpec] = field(default_factory=list)
 
     # ------------------------------------------------------------------ construction
 
@@ -383,6 +387,66 @@ class Analysis:
             self.pipeline = Pipeline.from_list(steps_before)
             raise
 
+    # ------------------------------------------------------------------ dashboard
+
+    def pin(self, spec: ChartSpec | None = None) -> int:
+        """Add a chart (the active one by default) to the dashboard; return its tile index.
+
+        The tile is an independent copy, so editing the main chart afterwards does not change it.
+        Pinning is deliberately outside the undo history: undoing a filter must not unpin charts.
+
+        Raises:
+            SpecError: If the dashboard is full or the chart does not fit the current data.
+        """
+        chosen = self._require_spec(spec)
+        if len(self.dashboard) >= MAX_TILES:
+            raise SpecError(
+                f"The dashboard already has {MAX_TILES} charts.",
+                hint="Remove one before pinning another — more than this stops being readable.",
+            )
+        chosen.validate(list(self.df.columns))
+        self.dashboard.append(chosen.copy())
+        return len(self.dashboard) - 1
+
+    def unpin(self, index: int) -> ChartSpec:
+        """Remove and return one tile."""
+        self._check_tile(index)
+        return self.dashboard.pop(index)
+
+    def move_tile(self, index: int, to: int) -> None:
+        """Move a tile to another position (clamped to the dashboard's bounds)."""
+        self._check_tile(index)
+        tile = self.dashboard.pop(index)
+        self.dashboard.insert(max(0, min(to, len(self.dashboard))), tile)
+
+    def replace_tile(self, index: int, spec: ChartSpec | None = None) -> None:
+        """Swap a tile for another chart (the active one by default)."""
+        self._check_tile(index)
+        chosen = self._require_spec(spec)
+        chosen.validate(list(self.df.columns))
+        self.dashboard[index] = chosen.copy()
+
+    def tile_status(self) -> list[str | None]:
+        """Per tile: ``None`` if it can be drawn on the current data, else why not.
+
+        A tile whose column was renamed away, retyped, or removed by a session restore is kept
+        and flagged rather than silently dropped — the user decides whether to remove it.
+        """
+        columns = list(self.df.columns)
+        statuses: list[str | None] = []
+        for tile in self.dashboard:
+            try:
+                tile.validate(columns)
+            except PlotaVizError as exc:
+                statuses.append(exc.message)
+            else:
+                statuses.append(None)
+        return statuses
+
+    def _check_tile(self, index: int) -> None:
+        if not 0 <= index < len(self.dashboard):
+            raise SpecError(f"There is no dashboard tile {index + 1}.")
+
     # ------------------------------------------------------------------ charting
 
     def choose(self, spec: ChartSpec) -> ChartSpec:
@@ -392,6 +456,10 @@ class Analysis:
         stay out of the correlation matrix and the generated script plots the same columns.
         """
         spec.validate(list(self.df.columns))
+        if any(spec is tile for tile in self.dashboard):
+            # Never share an object with a dashboard tile: editing the main chart would
+            # silently edit the tile too.
+            spec = spec.copy()
         if spec.chart in MATRIX_CHARTS and "columns" not in spec.options and self.profile:
             spec = spec.with_options(columns=self.profile.numeric)
         self.spec = spec
@@ -432,6 +500,19 @@ class Analysis:
             read_options=self.load_result.read_options,
         )
 
+    def generate_dashboard_code(self, *, flavour: str = "matplotlib") -> str:
+        """Emit one standalone script reproducing every dashboard tile."""
+        from .. import __version__
+
+        return codegen.generate_dashboard(
+            list(self.dashboard),
+            self.pipeline,
+            self.load_result.path,
+            flavour=flavour,
+            version=__version__,
+            read_options=self.load_result.read_options,
+        )
+
     def to_session(self, view: dict[str, Any] | None = None) -> Session:
         """Capture the current state as a savable session."""
         from .. import __version__
@@ -440,6 +521,7 @@ class Analysis:
             source_path=str(self.load_result.path),
             source_hash=self.load_result.file_hash,
             load_options=dict(self.load_options),
+            dashboard=[tile.copy() for tile in self.dashboard],
             type_overrides=dict(self.type_overrides),
             pipeline=self.pipeline,
             spec=self.spec,
@@ -483,6 +565,7 @@ class Analysis:
                 f"The saved filters could not be applied to the current data ({exc.message}), "
                 f"so the session was opened without them: {dropped}"
             )
+        analysis.dashboard = [tile.copy() for tile in session.dashboard]
         if session.spec is not None:
             try:
                 analysis.choose(session.spec)

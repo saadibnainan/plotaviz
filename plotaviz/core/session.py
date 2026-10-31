@@ -44,6 +44,8 @@ class Session:
         pipeline: The preprocessing steps, including filters.
         spec: The chart that was on screen.
         view: View settings — window geometry, active panel, renderer choice.
+        dashboard: Charts pinned to the dashboard, in tile order. Optional on disk, so files
+            written before dashboards existed still load.
         app_version: PlotaViz version that wrote the file.
         saved_at: ISO-8601 UTC timestamp.
         version: Session schema version.
@@ -56,6 +58,7 @@ class Session:
     pipeline: Pipeline = field(default_factory=Pipeline)
     spec: ChartSpec | None = None
     view: dict[str, Any] = field(default_factory=dict)
+    dashboard: list[ChartSpec] = field(default_factory=list)
     app_version: str = "0.1.0"
     saved_at: str = ""
     version: int = SESSION_VERSION
@@ -80,6 +83,7 @@ class Session:
             "pipeline": self.pipeline.to_list(),
             "chart": self.spec.to_dict() if self.spec else None,
             "view": dict(self.view),
+            "dashboard": [tile.to_dict() for tile in self.dashboard],
         }
 
     def save(self, path: str | Path) -> Path:
@@ -153,6 +157,11 @@ class Session:
             pipeline=pipeline,
             spec=ChartSpec.from_dict(chart) if chart else None,
             view=dict(payload.get("view") or {}),
+            dashboard=[
+                ChartSpec.from_dict(tile)
+                for tile in payload.get("dashboard") or []
+                if isinstance(tile, dict)
+            ],
             app_version=str(payload.get("app_version", "")),
             saved_at=str(payload.get("saved_at", "")),
             version=version,

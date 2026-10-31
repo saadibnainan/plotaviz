@@ -101,6 +101,8 @@ class CustomizePanel(QGroupBox):
         """Collapse to just the title bar when unticked."""
         for child in self.findChildren(QWidget):
             child.setVisible(expanded)
+        self.setFlat(not expanded)  # no empty frame under the title when collapsed
+        self.setMaximumHeight(16_777_215 if expanded else self.fontMetrics().height() * 2)
 
     def set_spec(self, spec: ChartSpec | None) -> None:
         """Show the customization of the chart on screen."""

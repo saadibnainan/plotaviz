@@ -48,6 +48,7 @@ from ..core.session import SESSION_SUFFIX, Session
 from ..core.spec import ChartSpec
 from .cleaning_panel import CleaningPanel
 from .customize_panel import CustomizePanel, apply_customization
+from .dashboard_view import DashboardView
 from .export_dialog import ExportDialog
 from .filter_panel import FilterPanel
 from .import_dialog import ImportDialog
@@ -130,7 +131,22 @@ class MainWindow(QMainWindow):
         self.chart_note.hide()
         layout.addWidget(self.chart_note)
 
-        self.setCentralWidget(central)
+        # Chart | Dashboard. The dashboard only redraws while it is visible (or when it is next
+        # shown), so filtering stays as fast as before when the user is on the Chart tab.
+        self.dashboard_view = DashboardView(self)
+        self.dashboard_view.open_requested.connect(self._open_tile)
+        self.dashboard_view.remove_requested.connect(self._remove_tile)
+        self.dashboard_view.move_requested.connect(self._move_tile)
+        self.dashboard_view.export_requested.connect(lambda: self.export(scope="dashboard"))
+        self.dashboard_view.columns_changed.connect(lambda _: self._refresh_dashboard(force=True))
+        self._dashboard_stale = False
+        self._editing_tile: int | None = None
+
+        self.central_tabs = QTabWidget(self)
+        self.central_tabs.addTab(central, "Chart")
+        self.central_tabs.addTab(self.dashboard_view, "Dashboard")
+        self.central_tabs.currentChanged.connect(lambda _: self._refresh_dashboard())
+        self.setCentralWidget(self.central_tabs)
 
     def _build_docks(self) -> None:
         """The left data dock and the right analysis dock."""
@@ -199,6 +215,17 @@ class MainWindow(QMainWindow):
         self.refine_button = QPushButton("Ask the model for a second opinion", recommend_page)
         self.refine_button.clicked.connect(self._on_refine)
         recommend_layout.addWidget(self.refine_button)
+
+        pin_row = QHBoxLayout()
+        self.pin_button = QPushButton("Pin to dashboard", recommend_page)
+        self.pin_button.setToolTip("Keep this chart on the Dashboard tab (Ctrl+D)")
+        self.pin_button.clicked.connect(self.pin_current)
+        self.update_tile_button = QPushButton("Update tile", recommend_page)
+        self.update_tile_button.clicked.connect(self._update_tile)
+        self.update_tile_button.hide()
+        pin_row.addWidget(self.pin_button)
+        pin_row.addWidget(self.update_tile_button)
+        recommend_layout.addLayout(pin_row)
 
         self.type_panel = TypeOverridePanel(self)
         self.type_panel.types_changed.connect(self._on_types_changed)
@@ -289,6 +316,11 @@ class MainWindow(QMainWindow):
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self.data_dock.toggleViewAction())
         view_menu.addAction(self.analysis_dock.toggleViewAction())
+        view_menu.addSeparator()
+        self.pin_action = QAction("&Pin chart to dashboard", self)
+        self.pin_action.setShortcut("Ctrl+D")
+        self.pin_action.triggered.connect(self.pin_current)
+        view_menu.addAction(self.pin_action)
         view_menu.addSeparator()
         settings_action = QAction("&Settings…", self)
         settings_action.setShortcut(QKeySequence.StandardKey.Preferences)
@@ -475,6 +507,8 @@ class MainWindow(QMainWindow):
         name = analysis.load_result.path.name
         self.setWindowTitle(f"{name} — {__app_name__}")
         self.filter_panel.set_filters(analysis.pipeline.filters)
+        self._set_editing_tile(None)
+        self._refresh_dashboard(force=True)
         self._sync_cleaning_panel()
         self._sync_history_actions()
         view, self._session_view = self._session_view, {}
@@ -708,10 +742,102 @@ class MainWindow(QMainWindow):
             queue_key=None if label in {"Undoing…", "Redoing…"} else label,
         )
 
+    # ------------------------------------------------------------------ dashboard
+
+    def pin_current(self) -> None:
+        """Add the chart on screen to the dashboard."""
+        if self.analysis is None or self.analysis.spec is None:
+            return
+        try:
+            index = self.analysis.pin()
+        except PlotaVizError as exc:
+            self._error("Could not pin this chart", str(exc))
+            return
+        self.statusBar().showMessage(f"Pinned as dashboard tile {index + 1}.")
+        self._refresh_dashboard(force=True)
+
+    def _open_tile(self, index: int) -> None:
+        """Load a tile into the Chart tab so it can be edited, then offer "Update tile"."""
+        if self.analysis is None or not 0 <= index < len(self.analysis.dashboard):
+            return
+        spec = self.analysis.dashboard[index].copy()
+        if self._defer_while_busy("choose", lambda: self._open_tile(index)):
+            return
+        try:
+            self.analysis.choose(spec)
+        except PlotaVizError as exc:
+            self._error("This tile does not fit the current data", str(exc))
+            return
+        self._set_editing_tile(index)
+        self.central_tabs.setCurrentIndex(0)
+        self.analysis_tabs.setCurrentIndex(0)
+        self._populate_recommendations()
+        self._render_current()
+
+    def _update_tile(self) -> None:
+        """Replace the tile being edited with the chart on screen."""
+        if self.analysis is None or self._editing_tile is None:
+            return
+        try:
+            self.analysis.replace_tile(self._editing_tile)
+        except PlotaVizError as exc:
+            self._error("Could not update the tile", str(exc))
+            return
+        self.statusBar().showMessage(f"Updated dashboard tile {self._editing_tile + 1}.")
+        self._refresh_dashboard(force=True)
+
+    def _remove_tile(self, index: int) -> None:
+        if self.analysis is None:
+            return
+        self.analysis.unpin(index)
+        if self._editing_tile is not None:
+            if self._editing_tile == index:
+                self._set_editing_tile(None)
+            elif self._editing_tile > index:
+                self._set_editing_tile(self._editing_tile - 1)
+        self._refresh_dashboard(force=True)
+
+    def _move_tile(self, index: int, to: int) -> None:
+        if self.analysis is None:
+            return
+        self.analysis.move_tile(index, to)
+        if self._editing_tile == index:
+            self._set_editing_tile(max(0, min(to, len(self.analysis.dashboard) - 1)))
+        elif self._editing_tile == to:
+            self._set_editing_tile(index)
+        self._refresh_dashboard(force=True)
+
+    def _set_editing_tile(self, index: int | None) -> None:
+        self._editing_tile = index
+        self.update_tile_button.setVisible(index is not None)
+        if index is not None:
+            self.update_tile_button.setText(f"Update tile {index + 1}")
+
+    def _refresh_dashboard(self, *, force: bool = False) -> None:
+        """Redraw the tiles if the Dashboard tab is showing; otherwise mark them stale.
+
+        ``force`` marks the dashboard stale first — used after pinning, removing, reordering,
+        or any data change.
+        """
+        count = len(self.analysis.dashboard) if self.analysis else 0
+        self.central_tabs.setTabText(1, f"Dashboard ({count})" if count else "Dashboard")
+        if force:
+            self._dashboard_stale = True
+        if not self._dashboard_stale or self.central_tabs.currentIndex() != 1:
+            return
+        self._dashboard_stale = False
+        if self.analysis is None:
+            self.dashboard_view.set_tiles(None, [], [])
+            return
+        self.dashboard_view.set_tiles(
+            self.analysis.df, list(self.analysis.dashboard), self.analysis.tile_status()
+        )
+
     def _after_rerun(self, *, sync_panels: bool = False) -> None:
         """Refresh every panel after a pipeline replay."""
         if self.analysis is None:
             return
+        self._refresh_dashboard(force=True)
         self._sync_cleaning_panel()
         self._sync_history_actions()
         if sync_panels:
@@ -841,23 +967,46 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ export / session
 
-    def export(self) -> None:
-        """Export the chart as an image, an HTML page, or a Python script."""
+    def export(self, *, scope: str = "chart") -> None:
+        """Export the chart, or the whole dashboard, as an image, HTML page, or Python script."""
         if self.analysis is None or self.analysis.spec is None:
             return
 
         source = self.analysis.load_result.path
-        dialog = ExportDialog(self, default_name=source.stem or "chart", start_dir=source.parent)
+        tiles = len(self.analysis.dashboard)
+        dialog = ExportDialog(
+            self,
+            default_name=(source.stem or "chart") + ("_dashboard" if scope == "dashboard" else ""),
+            start_dir=source.parent,
+            dashboard_tiles=tiles,
+            dashboard_scope=scope == "dashboard",
+        )
         if dialog.exec() != ExportDialog.DialogCode.Accepted:
             return
 
         target = dialog.path()
         mode = dialog.mode
         analysis = self.analysis
+        specs = list(analysis.dashboard)
+        columns = dialog.columns_spin.value()
 
         def task(progress: Any = None) -> Path:
             if progress:
                 progress(40, f"Writing {target.name}…")
+            if dialog.scope == "dashboard":
+                from ..core import codegen, exporter
+
+                if mode == "code":
+                    return codegen.write(
+                        target, analysis.generate_dashboard_code(flavour=dialog.flavour())
+                    )
+                if mode == "html":
+                    return exporter.export_dashboard_html(
+                        analysis.df, specs, target, columns=columns
+                    )
+                return exporter.export_dashboard_image(
+                    analysis.df, specs, target, options=dialog.options(), columns=columns
+                )
             if mode == "code":
                 from ..core import codegen
 
@@ -908,6 +1057,8 @@ class MainWindow(QMainWindow):
         view = {
             "renderer": self.chart_view.renderer,
             "active_tab": self.analysis_tabs.currentIndex(),
+            "central_tab": self.central_tabs.currentIndex(),
+            "dashboard_columns": self.dashboard_view.columns,
             "geometry": bytes(self.saveGeometry().toBase64().data()).decode(),
         }
         try:
@@ -1139,6 +1290,13 @@ class MainWindow(QMainWindow):
 
     def _restore_view(self, view: dict[str, Any]) -> None:
         """Apply the window state a session saved: the active tab and the window geometry."""
+        columns = view.get("dashboard_columns")
+        if isinstance(columns, int):
+            self.dashboard_view.set_columns(columns)
+        central = view.get("central_tab")
+        if isinstance(central, int) and 0 <= central < self.central_tabs.count():
+            self.central_tabs.setCurrentIndex(central)
+            self._refresh_dashboard(force=True)
         tab = view.get("active_tab")
         if isinstance(tab, int) and 0 <= tab < self.analysis_tabs.count():
             self.analysis_tabs.setCurrentIndex(tab)

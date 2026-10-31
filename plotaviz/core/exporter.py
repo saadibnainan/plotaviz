@@ -14,8 +14,8 @@ from typing import Any
 
 import pandas as pd
 
-from .errors import ExportError
-from .plotter import build_matplotlib, prepare
+from .errors import ExportError, PlotaVizError
+from .plotter import build_matplotlib, build_matplotlib_grid, prepare
 from .spec import ChartSpec
 
 #: Formats :func:`export_image` can write.
@@ -131,6 +131,126 @@ def export_html(df: pd.DataFrame, spec: ChartSpec, path: str | Path) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         # Embed plotly.js (~4 MB) so the page works offline, like the rest of PlotaViz.
         figure.write_html(str(target), include_plotlyjs=True, full_html=True)
+    except OSError as exc:
+        raise ExportError(f"Could not write {target}.", hint=str(exc)) from exc
+    return target
+
+
+def export_dashboard_image(
+    df: pd.DataFrame,
+    specs: list[ChartSpec],
+    path: str | Path,
+    *,
+    options: ExportOptions | None = None,
+    columns: int = 2,
+    title: str | None = None,
+) -> Path:
+    """Write every dashboard tile into one image or PDF.
+
+    ``options.width``/``height`` are the size of *one tile*; the page grows with the grid. SVG
+    and PDF stay vector.
+
+    Raises:
+        ExportError: If the extension is unsupported or the file cannot be written.
+    """
+    options = options or ExportOptions(width=6.0, height=4.0)
+    target = Path(path).expanduser()
+    fmt = target.suffix.lower().lstrip(".") or "png"
+    if not target.suffix:
+        target = target.with_suffix(".png")
+    if fmt not in IMAGE_FORMATS:
+        raise ExportError(
+            f"PlotaViz cannot export {fmt!r} images.",
+            hint=f"Supported formats: {', '.join(IMAGE_FORMATS)}.",
+        )
+    figure = build_matplotlib_grid(
+        df,
+        specs,
+        columns=columns,
+        tile_size=options.figsize,
+        dpi=options.dpi,
+        title=title,
+    )
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(
+            target,
+            dpi=options.dpi,
+            transparent=options.transparent,
+            format="jpeg" if fmt == "jpg" else fmt,
+        )
+    except (OSError, ValueError) as exc:
+        raise ExportError(f"Could not write {target}.", hint=str(exc)) from exc
+    finally:
+        _close(figure)
+    return target
+
+
+def export_dashboard_html(
+    df: pd.DataFrame,
+    specs: list[ChartSpec],
+    path: str | Path,
+    *,
+    columns: int = 2,
+    title: str = "Dashboard",
+) -> Path:
+    """Write every dashboard tile as interactive Plotly charts on one self-contained page.
+
+    plotly.js is embedded once in the page head, not once per chart, so the file stays the size
+    of a single-chart export plus the data, and it works offline.
+
+    Raises:
+        ExportError: If the file cannot be written.
+    """
+    import html
+
+    from plotly.offline import get_plotlyjs
+
+    from .plotter import build_plotly
+
+    if not specs:
+        raise ExportError("The dashboard has no charts.", hint="Pin a chart first.")
+    target = Path(path).expanduser().with_suffix(".html")
+    tiles: list[str] = []
+    for spec in specs:
+        try:
+            figure = build_plotly(df, spec)
+            tiles.append(
+                figure.to_html(full_html=False, include_plotlyjs=False, config={"responsive": True})
+            )
+        except PlotaVizError as exc:
+            tiles.append(
+                f'<div class="error"><b>{html.escape(spec.display_title())}</b>'
+                f"<p>{html.escape(exc.message)}</p></div>"
+            )
+    cells = "\n".join(f'<div class="tile">{tile}</div>' for tile in tiles)
+    page = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{html.escape(title)}</title>
+<script type="text/javascript">{get_plotlyjs()}</script>
+<style>
+body {{ font-family: system-ui, sans-serif; margin: 16px; background: #fff; color: #222; }}
+.grid {{ display: grid; gap: 16px;
+         grid-template-columns: repeat({max(1, int(columns))}, minmax(0, 1fr)); }}
+.tile {{ border: 1px solid #ddd; border-radius: 6px; padding: 4px; min-height: 380px; }}
+.error {{ padding: 24px; color: #a33; }}
+@media (max-width: 800px) {{ .grid {{ grid-template-columns: 1fr; }} }}
+</style>
+</head>
+<body>
+<h1>{html.escape(title)}</h1>
+<div class="grid">
+{cells}
+</div>
+</body>
+</html>
+"""
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(page, encoding="utf-8")
     except OSError as exc:
         raise ExportError(f"Could not write {target}.", hint=str(exc)) from exc
     return target

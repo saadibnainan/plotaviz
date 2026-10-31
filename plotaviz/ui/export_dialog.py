@@ -56,6 +56,8 @@ class ExportDialog(QDialog):
         *,
         default_name: str = "chart",
         start_dir: str | Path = ".",
+        dashboard_tiles: int = 0,
+        dashboard_scope: bool = False,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Export")
@@ -65,6 +67,28 @@ class ExportDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
+        # --- which charts: only offered when something is pinned to the dashboard
+        self.scope_box = QGroupBox("Charts", self)
+        scope_layout = QHBoxLayout(self.scope_box)
+        self.chart_scope_radio = QRadioButton("This chart", self.scope_box)
+        self.dashboard_scope_radio = QRadioButton(
+            f"The dashboard ({dashboard_tiles} chart{'s' if dashboard_tiles != 1 else ''}, "
+            "one file)",
+            self.scope_box,
+        )
+        self.columns_spin = QSpinBox(self.scope_box)
+        self.columns_spin.setRange(1, 3)
+        self.columns_spin.setValue(2)
+        self.columns_spin.setPrefix("columns: ")
+        scope_layout.addWidget(self.chart_scope_radio)
+        scope_layout.addWidget(self.dashboard_scope_radio)
+        scope_layout.addWidget(self.columns_spin)
+        scope_layout.addStretch(1)
+        self.chart_scope_radio.setChecked(not (dashboard_scope and dashboard_tiles))
+        self.dashboard_scope_radio.setChecked(bool(dashboard_scope and dashboard_tiles))
+        self.scope_box.setVisible(dashboard_tiles > 0)
+        layout.addWidget(self.scope_box)
+
         # --- what to export
         what = QGroupBox("What to export", self)
         what_layout = QVBoxLayout(what)
@@ -72,7 +96,12 @@ class ExportDialog(QDialog):
         self.image_radio.setChecked(True)
         self.code_radio = QRadioButton("Python code that reproduces it", what)
         self.html_radio = QRadioButton("Interactive HTML page", what)
-        for radio in (self.image_radio, self.code_radio, self.html_radio):
+        for radio in (
+            self.image_radio,
+            self.code_radio,
+            self.html_radio,
+            self.dashboard_scope_radio,
+        ):
             radio.toggled.connect(self._sync_enabled)
             what_layout.addWidget(radio)
         code_note = QLabel(
@@ -162,6 +191,11 @@ class ExportDialog(QDialog):
     # ------------------------------------------------------------------ behaviour
 
     @property
+    def scope(self) -> str:
+        """``"chart"`` or ``"dashboard"``."""
+        return "dashboard" if self.dashboard_scope_radio.isChecked() else "chart"
+
+    @property
     def mode(self) -> str:
         """``"image"``, ``"code"``, or ``"html"``."""
         if self.code_radio.isChecked():
@@ -182,6 +216,13 @@ class ExportDialog(QDialog):
         """Enable only the settings that apply to the selected mode, and fix the extension."""
         is_image = self.mode == "image"
         self.image_box.setEnabled(is_image)
+        dashboard = self.scope == "dashboard"
+        self.columns_spin.setEnabled(dashboard)
+        # For a dashboard the size is per tile, so a sensible default is smaller.
+        if dashboard != getattr(self, "_sized_for_dashboard", False):
+            self._sized_for_dashboard = dashboard
+            self.width_spin.setValue(6.0 if dashboard else 10.0)
+            self.height_spin.setValue(4.0 if dashboard else 6.0)
         self.code_box.setEnabled(self.mode == "code")
 
         raster = str(self.format_combo.currentData()) in {"png", "jpg", "jpeg", "webp", "tiff"}
