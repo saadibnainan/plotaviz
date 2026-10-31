@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QRadioButton,
     QSpinBox,
@@ -222,6 +223,26 @@ class ExportDialog(QDialog):
             transparent=self.transparent_check.isChecked(),
             include_notice=self.notice_check.isChecked(),
         )
+
+    def accept(self) -> None:
+        """Confirm before replacing an existing file.
+
+        The default destination is ``<dataset folder>/<dataset name>.<ext>``, so exporting code
+        for ``sales.csv`` proposes ``sales.py`` — which may well be the user's own script. The
+        Browse dialog asks before overwriting; a path typed or accepted here must too.
+        """
+        target = self.path()
+        if target.exists():
+            answer = QMessageBox.question(
+                self,
+                "Replace file?",
+                f"{target.name} already exists in {target.parent}.\n\nReplace it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        super().accept()
 
     def flavour(self) -> str:
         """``"matplotlib"`` or ``"plotly"`` for code export."""

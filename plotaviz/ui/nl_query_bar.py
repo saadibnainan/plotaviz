@@ -132,6 +132,10 @@ class NLQueryBar(QWidget):
             combo.addItem("none")
             combo.addItems(self._columns)
         self._updating = False
+        # Refilling the combos resets them to "none"; put the interpreted spec back so the row
+        # keeps describing the chart on screen after a filter or type change.
+        if self._spec is not None and self.interpretation.isVisible():
+            self.show_spec(self._spec)
 
     def set_enabled_for_provider(self, configured: bool, provider_name: str = "") -> None:
         """Enable or disable the bar depending on whether an LLM provider is set up.
