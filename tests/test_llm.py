@@ -261,7 +261,8 @@ class TestOllama:
     def test_reports_not_running_without_a_server(self) -> None:
         provider = OllamaProvider(host="http://127.0.0.1:59999")
         assert provider.is_running() is False
-        assert provider.list_models() == []
+        ok, message, models = provider.check_key()
+        assert ok is False and models == [] and "No Ollama server" in message
         assert provider.is_configured() is False
 
     def test_connection_error_explains_how_to_start_it(self) -> None:

@@ -22,6 +22,23 @@ class AnthropicProvider(Provider):
         "claude-haiku-5-5",
     )
 
+    def list_models(self) -> list[str]:
+        """Model IDs from ``GET /v1/models``; sends no dataset information."""
+        try:
+            import anthropic
+        except ImportError as exc:
+            raise LLMError(
+                "The Anthropic provider needs the anthropic package.",
+                hint='Install it with: pip install "plotaviz[llm]"',
+            ) from exc
+        client = anthropic.Anthropic(api_key=self.require_key(), timeout=self.timeout)
+        try:
+            return sorted(model.id for model in client.models.list())
+        except anthropic.AuthenticationError as exc:
+            raise LLMError("Anthropic rejected the API key.") from exc
+        except anthropic.APIError as exc:
+            raise LLMError("Could not reach Anthropic.", hint=redact(str(exc))) from exc
+
     def complete(self, system: str, user: str, *, timeout: float) -> str:
         """Send one message and return the text of the reply."""
         try:

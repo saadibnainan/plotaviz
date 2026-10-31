@@ -10,6 +10,7 @@ is what makes type overrides and filter changes cheap.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,12 +25,14 @@ from .preprocess import (
     OUTLIER_ACTIONS,
     OUTLIER_METHODS,
     CoerceTypes,
+    ColumnFilter,
     Deduplicate,
     FillMissing,
     FlagOutliers,
     NormalizeColumnNames,
     Pipeline,
     PipelineResult,
+    QueryFilter,
     Step,
     default_pipeline,
 )
@@ -82,6 +85,7 @@ class Analysis:
     _undo: list[_Snapshot] = field(default_factory=list, repr=False)
     _redo: list[_Snapshot] = field(default_factory=list, repr=False)
     dashboard: list[ChartSpec] = field(default_factory=list)
+    _clean_cache: tuple[str, PipelineResult] | None = field(default=None, repr=False)
 
     # ------------------------------------------------------------------ construction
 
@@ -134,7 +138,7 @@ class Analysis:
         This is the single path for every state change: a type override, a new filter, a changed
         missing-value strategy. Replaying is cheap because steps are pure.
         """
-        result = self.pipeline.run(self.raw)
+        result = self._run_pipeline()
         if result.df.empty and self.pipeline.filters:
             raise PreprocessError(
                 "No rows match the current filters.",
@@ -152,6 +156,37 @@ class Analysis:
             self.recommendations = []
         self._reconcile_spec()
         return self.result
+
+    def _run_pipeline(self) -> PipelineResult:
+        """Run the pipeline, reusing the cleaned frame when only the filters changed.
+
+        Cleaning (type coercion, deduplication, missing values, outliers) is the slow part on
+        large data, and a filter edit does not change it. The cleaned frame is cached against the
+        serialized cleaning steps, so a filter change replays only the filters. The result is
+        identical to a full run; any change to a cleaning step or type misses the cache.
+        """
+        steps = self.pipeline.steps
+        is_filter = [isinstance(s, (QueryFilter, ColumnFilter)) for s in steps]
+        first_filter = is_filter.index(True) if True in is_filter else len(steps)
+        if any(not f for f in is_filter[first_filter:]):
+            # A cleaning step after a filter (possible in a hand-edited session): no shortcut.
+            self._clean_cache = None
+            return self.pipeline.run(self.raw)
+
+        cleaning, filters = steps[:first_filter], steps[first_filter:]
+        key = json.dumps([s.to_dict() for s in cleaning], sort_keys=True, default=str)
+        if self._clean_cache is None or self._clean_cache[0] != key:
+            self._clean_cache = (key, Pipeline(cleaning).run(self.raw))
+        cleaned = self._clean_cache[1]
+        if not filters:
+            return cleaned
+        filtered = Pipeline(filters).run(cleaned.df)
+        return PipelineResult(
+            filtered.df,
+            [*cleaned.reports, *filtered.reports],
+            cleaned.rows_before,
+            filtered.rows_after,
+        )
 
     def _reconcile_spec(self) -> None:
         """Decide what the active chart is after a replay.

@@ -130,8 +130,10 @@ class TestExport:
 
 
 class TestDashboardTab:
-    def show_dashboard(self, window) -> None:
+    def show_dashboard(self, window, qtbot=None) -> None:
         window.central_tabs.setCurrentIndex(1)
+        if qtbot is not None:
+            wait_idle(qtbot, window)  # tiles are built on a worker
 
     def test_pin_updates_the_tab(self, qtbot, window, csv_path: Path) -> None:
         open_and_wait(qtbot, window, csv_path)
@@ -140,7 +142,7 @@ class TestDashboardTab:
         window.pin_action.trigger()
 
         assert window.central_tabs.tabText(1) == "Dashboard (2)"
-        self.show_dashboard(window)
+        self.show_dashboard(window, qtbot)
         assert window.dashboard_view.tile_count == 2
         assert len(window.dashboard_view._canvases) == 2
 
@@ -158,7 +160,7 @@ class TestDashboardTab:
     def test_filter_redraws_visible_tiles(self, qtbot, window, csv_path: Path) -> None:
         open_and_wait(qtbot, window, csv_path)
         window.pin_current()
-        self.show_dashboard(window)
+        self.show_dashboard(window, qtbot)
         before = window.dashboard_view.summary.text()
 
         window._on_filters_changed([QueryFilter("revenue > 2000")])
@@ -174,7 +176,7 @@ class TestDashboardTab:
         wait_idle(qtbot, window)
         assert window._dashboard_stale
 
-        self.show_dashboard(window)
+        self.show_dashboard(window, qtbot)
 
         assert not window._dashboard_stale
         assert f"{len(window.analysis.df):,} rows" in window.dashboard_view.summary.text()

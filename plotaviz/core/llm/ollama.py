@@ -61,15 +61,22 @@ class OllamaProvider(Provider):
             return False
 
     def list_models(self) -> list[str]:
-        """Model tags the local server has pulled. Empty when it is not running."""
+        """Model tags the server has pulled.
+
+        Raises:
+            LLMError: If the server cannot be reached.
+        """
         try:
             import httpx
 
             response = httpx.get(f"{self.host}/api/tags", timeout=3.0)
             response.raise_for_status()
             return [m["name"] for m in response.json().get("models", [])]
-        except Exception:
-            return []
+        except Exception as exc:
+            raise LLMError(
+                f"No Ollama server answered at {self.host}.",
+                hint="Start it with `ollama serve`.",
+            ) from exc
 
     def complete(self, system: str, user: str, *, timeout: float) -> str:
         """Send one message to the local model and return the text of the reply."""

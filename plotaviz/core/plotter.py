@@ -659,7 +659,7 @@ def build_matplotlib(
     import matplotlib
 
     matplotlib.use("Agg", force=False)
-    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
 
     data = prepared or prepare(df, spec)
     frame, spec = data.df, data.spec
@@ -671,7 +671,10 @@ def build_matplotlib(
             fig.suptitle(spec.display_title())
             return fig
 
-        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        # A bare Figure, not pyplot: no global registry to leak into or to race on when charts are
+        # built on a worker thread.
+        fig = Figure(figsize=figsize, dpi=dpi)
+        ax = fig.subplots()
         _draw_into(fig, ax, data)
 
         if data.sampled:
@@ -877,7 +880,7 @@ def _mpl_distribution(ax: Any, frame: pd.DataFrame, spec: ChartSpec, *, violin: 
 
 def _mpl_treemap(ax: Any, frame: pd.DataFrame, spec: ChartSpec) -> None:
     """Draw a simple slice-and-dice treemap without pulling in a dedicated dependency."""
-    import matplotlib.pyplot as plt
+    import matplotlib
     from matplotlib.patches import Rectangle
 
     labels = frame[str(spec.x)].astype(str).tolist()
@@ -893,7 +896,7 @@ def _mpl_treemap(ax: Any, frame: pd.DataFrame, spec: ChartSpec) -> None:
         raise PlotError("The treemap has no positive values to lay out.")
 
     total = sum(size for _, size in pairs)
-    cmap = plt.get_cmap("tab20")
+    cmap = matplotlib.colormaps["tab20"]
     x = y = 0.0
     width = height = 1.0
     horizontal = True
@@ -941,9 +944,9 @@ def _mpl_pair_plot(
     frame: pd.DataFrame, *, figsize: tuple[float, float], dpi: int, color: str = DEFAULT_COLOR
 ) -> Any:
     """Scatter-matrix of up to five numeric columns, histograms on the diagonal."""
-    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
 
-    fig = plt.figure(figsize=figsize, dpi=dpi)
+    fig = Figure(figsize=figsize, dpi=dpi)
     _draw_pair_plot(fig, fig.add_gridspec(1, 1)[0, 0], frame, color=color)
     fig.tight_layout()
     return fig
@@ -1004,13 +1007,13 @@ def build_matplotlib_grid(
     matplotlib.use("Agg", force=False)
     import math
 
-    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
 
     if not specs:
         raise PlotError("The dashboard has no charts.", hint="Pin a chart to the dashboard first.")
     columns = max(1, min(int(columns), len(specs)))
     rows = math.ceil(len(specs) / columns)
-    fig = plt.figure(
+    fig = Figure(
         figsize=(tile_size[0] * columns, tile_size[1] * rows), dpi=dpi, layout="constrained"
     )
     grid = fig.add_gridspec(rows, columns)
