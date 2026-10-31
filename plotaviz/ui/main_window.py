@@ -105,6 +105,10 @@ class MainWindow(QMainWindow):
         self.tile_runner = TaskRunner(self)
         self.tile_runner.idle.connect(self._tiles_if_requested)
         self._tiles_again = False
+        # Bumped whenever what should be on screen changes; a worker result built for an older
+        # generation is dropped instead of drawn over the newer state.
+        self._render_generation = 0
+        self._tiles_generation = 0
         # Work requested while another task was running, in order. Entries with the same key
         # replace each other — a burst of filter edits needs one replay with the final state —
         # but different kinds of change (a type override, then a filter) are all kept.
@@ -137,6 +141,7 @@ class MainWindow(QMainWindow):
 
         prefer_static = self.settings.value("performance/prefer_static", False, type=bool)
         self.chart_view = ChartView(central, prefer_static=prefer_static)
+        self.chart_view.static_fallback_needed.connect(lambda: self._render_current(changed=False))
         layout.addWidget(self.chart_view, stretch=1)
 
         self.chart_note = QLabel("", central)
@@ -695,6 +700,7 @@ class MainWindow(QMainWindow):
         """
         if changed:
             self._set_dirty()
+        self._render_generation += 1
         if self.analysis is None or self.analysis.spec is None:
             self.chart_view.show_message("No chart is selected yet.")
             return
@@ -710,10 +716,11 @@ class MainWindow(QMainWindow):
         df, spec = self.analysis.df, self.analysis.spec.copy()
         interactive = self.chart_view.interactive
         max_points = int(self.settings.value("performance/max_points", MAX_POINTS))
+        generation = self._render_generation
         self.render_runner.start(
             lambda: build_render(df, spec, interactive=interactive, max_points=max_points),
-            on_finished=self._install_render,
-            on_failed=self._render_failed,
+            on_finished=lambda result: self._install_render(result, generation),
+            on_failed=lambda message, trace: self._render_failed(message, trace, generation),
         )
 
     def _render_if_requested(self) -> None:
@@ -721,9 +728,9 @@ class MainWindow(QMainWindow):
             self._render_again = False
             self._render_current(changed=False)
 
-    def _install_render(self, result: RenderResult) -> None:
-        """Show a chart built on the render worker — unless a newer one is already queued."""
-        if self._render_again:
+    def _install_render(self, result: RenderResult, generation: int) -> None:
+        """Show a chart built on the render worker — unless it is already out of date."""
+        if self._render_again or generation != self._render_generation:
             return
         notes = self.chart_view.install(result)
         if notes:
@@ -733,8 +740,8 @@ class MainWindow(QMainWindow):
             self.chart_note.hide()
         self.statusBar().showMessage(self.chart_view.renderer_note())
 
-    def _render_failed(self, message: str, _trace: str) -> None:
-        if self._render_again:
+    def _render_failed(self, message: str, _trace: str, generation: int) -> None:
+        if self._render_again or generation != self._render_generation:
             return
         self.chart_view.show_message(message)
         self.chart_note.hide()
@@ -922,6 +929,7 @@ class MainWindow(QMainWindow):
         self.central_tabs.setTabText(1, f"Dashboard ({count})" if count else "Dashboard")
         if force:
             self._dashboard_stale = True
+            self._tiles_generation += 1  # anything in flight now describes old tiles
             self._set_dirty()
         if not self._dashboard_stale or self.central_tabs.currentIndex() != 1:
             return
@@ -934,9 +942,11 @@ class MainWindow(QMainWindow):
             return
         df, specs = self.analysis.df, [tile.copy() for tile in self.analysis.dashboard]
         statuses = self.analysis.tile_status()
+        self._tiles_generation += 1
+        generation = self._tiles_generation
 
         def installed(built: list[Any]) -> None:
-            if not self._tiles_again:
+            if not self._tiles_again and generation == self._tiles_generation:
                 self.dashboard_view.set_tiles(df, specs, statuses, built)
 
         self.tile_runner.start(
@@ -1195,7 +1205,10 @@ class MainWindow(QMainWindow):
     def open_settings(self) -> None:
         """Show the settings dialog and apply anything that changed."""
         dialog = SettingsDialog(
-            self, settings=self.settings, profile=self.analysis.profile if self.analysis else None
+            self,
+            settings=self.settings,
+            profile=self.analysis.profile if self.analysis else None,
+            candidates=list(self.analysis.recommendations) if self.analysis else None,
         )
         if dialog.exec() == SettingsDialog.DialogCode.Accepted:
             self._refresh_llm_state()

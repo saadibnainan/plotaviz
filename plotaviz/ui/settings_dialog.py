@@ -15,6 +15,7 @@ from typing import Any
 
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -44,6 +45,7 @@ from ..core.llm.ollama import DEFAULT_HOST, is_loopback
 from ..core.loader import DEFAULT_LARGE_FILE_MB
 from ..core.plotter import MAX_POINTS
 from ..core.profiler import DatasetProfile
+from ..core.spec import ChartSpec
 from .workers import TaskRunner
 
 #: Placeholder shown when a key is already in the keyring. The real value is never displayed.
@@ -71,9 +73,11 @@ class SettingsDialog(QDialog):
         *,
         settings: QSettings | None = None,
         profile: DatasetProfile | None = None,
+        candidates: list[ChartSpec] | None = None,
     ) -> None:
         super().__init__(parent)
         self._profile = profile
+        self._candidates = list(candidates or [])
         self._runner = TaskRunner(self)
         self.setWindowTitle("PlotaViz settings")
         self.setMinimumWidth(560)
@@ -377,19 +381,31 @@ class SettingsDialog(QDialog):
         self._status("Checking… (lists the available models; no data is sent)", "mid")
         self._runner.start(
             provider.check_key,
-            on_finished=self._on_checked,
-            on_failed=lambda message, _trace: self._on_checked((False, message, [])),
+            on_finished=lambda result: self._on_checked(result, provider_name),
+            on_failed=lambda message, _trace: self._on_checked((False, message, []), provider_name),
         )
 
     def done(self, result: int) -> None:
-        """Let a running key check finish before the dialog (and its thread) goes away."""
-        self._runner.cancel()
-        self._runner.wait()
+        """Close at once, even while a key check is still waiting on the network.
+
+        Waiting would freeze the whole app for as long as a slow endpoint takes. Instead the
+        check is detached: its callbacks are dropped (they would touch this dialog's deleted
+        widgets) and its runner is handed to the application so the thread can finish safely.
+        """
+        if self._runner.busy:
+            self._runner._on_finished = None
+            self._runner._on_failed = None
+            self._runner.setParent(QApplication.instance())
         super().done(result)
 
-    def _on_checked(self, result: tuple[bool, str, list[str]]) -> None:
+    def _on_checked(self, result: tuple[bool, str, list[str]], provider_name: str) -> None:
         ok, message, models = result
         self.test_button.setEnabled(True)
+        if provider_name != str(self.provider_combo.currentData() or ""):
+            # The user switched provider while the check ran: report it, but never put one
+            # provider's models into another provider's list.
+            self._status(f"(Result for {provider_name}) {message}", "ok" if ok else "error")
+            return
         self._status(message, "ok" if ok else "error")
         if ok and models:
             current = self.model_combo.currentText()
@@ -414,21 +430,25 @@ class SettingsDialog(QDialog):
         dialog.resize(760, 620)
         layout = QVBoxLayout(dialog)
         note = QLabel(
-            "This is the complete request for the open dataset — the instructions, then the "
-            "summary. A question you type in the query bar is appended at the end. Nothing else "
-            "is sent.",
+            "These are the complete requests for the open dataset. A question you type in the "
+            "query bar is appended at the end of the first; the second-opinion request sends the "
+            "second. Nothing else is sent.",
             dialog,
         )
         note.setWordWrap(True)
         layout.addWidget(note)
         text = QPlainTextEdit(dialog)
         text.setReadOnly(True)
-        text.setPlainText(
-            "=== Instructions (system prompt) ===\n"
-            + _SYSTEM_PROMPT
-            + "\n=== Request ===\n"
-            + build_prompt(self._profile)
-        )
+        sections = [
+            "=== Instructions (system prompt, sent with every request) ===\n" + _SYSTEM_PROMPT,
+            "=== Query-bar request ===\n" + build_prompt(self._profile),
+        ]
+        if self._candidates:
+            sections.append(
+                "=== Second-opinion request (includes the local engine's top candidates) ===\n"
+                + build_prompt(self._profile, candidates=self._candidates)
+            )
+        text.setPlainText("\n\n".join(sections))
         layout.addWidget(text, stretch=1)
         close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dialog)
         close.rejected.connect(dialog.reject)

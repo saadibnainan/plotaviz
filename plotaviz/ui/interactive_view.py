@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from PySide6.QtCore import QStandardPaths, Qt, QUrl
+from PySide6.QtCore import QStandardPaths, Qt, QUrl, Signal
 from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from ..core.errors import PlotError
@@ -112,8 +113,14 @@ def _shell_page() -> Path:
     folder = Path(base or tempfile.gettempdir()) / "plotaviz-view"
     folder.mkdir(parents=True, exist_ok=True)
     script = folder / f"plotly-{plotly.__version__}.min.js"
-    if not script.exists():
-        script.write_text(get_plotlyjs(), encoding="utf-8")
+    source = get_plotlyjs().encode("utf-8")
+    # Rewrite when missing or not exactly the expected size: a write interrupted by a crash, or
+    # raced by a second instance, must not leave a truncated script cached forever. The write
+    # goes to a temporary name first and is renamed into place atomically.
+    if not script.exists() or script.stat().st_size != len(source):
+        partial = folder / f".{script.name}.{os.getpid()}.part"
+        partial.write_bytes(source)
+        os.replace(partial, script)
     shell = folder / "chart.html"
     shell.write_text(_SHELL_HTML.format(script=script.name), encoding="utf-8")
     return shell
@@ -128,6 +135,10 @@ class ChartView(QWidget):
             very large charts and for users who dislike the browser view.
     """
 
+    #: The interactive view failed while showing a chart; the owner should re-render (the
+    #: view has already switched to static).
+    static_fallback_needed = Signal()
+
     def __init__(self, parent: QWidget | None = None, *, prefer_static: bool = False) -> None:
         super().__init__(parent)
         self._layout = QVBoxLayout(self)
@@ -140,6 +151,7 @@ class ChartView(QWidget):
         self._toolbar: Any = None
         self._web: Any = None
         self._shell_ready = False
+        self._shell_failed = False
         self._pending_json: str | None = None
         self.last_notes: list[str] = []
         #: Counters for tests and diagnostics: full page loads vs. in-place updates.
@@ -191,7 +203,15 @@ class ChartView(QWidget):
             PlotError: If the chart cannot be built.
         """
         result = build_render(df, spec, interactive=self._interactive, max_points=max_points)
-        return self.install(result)
+        notes = self.install(result)
+        if result.figure_json is not None and not self._interactive:
+            # The interactive install failed just now: draw the static chart in its place, and
+            # keep the note that says why.
+            failure = [n for n in notes if "interactive view failed" in n]
+            static = build_render(df, spec, interactive=False, max_points=max_points)
+            notes = [*self.install(static), *failure]
+            self.last_notes = notes
+        return notes
 
     def install(self, result: RenderResult) -> list[str]:
         """Show a chart built by :func:`build_render`. Must run on the UI thread."""
@@ -202,11 +222,15 @@ class ChartView(QWidget):
             try:
                 self._install_interactive(result.figure_json)
                 return self.last_notes
-            except Exception as exc:  # WebEngine broke at runtime: keep the user's chart
+            except Exception as exc:  # WebEngine broke at runtime
+                # The result holds only Plotly JSON, so the static chart has to be rebuilt from
+                # the data; the owner does that on this signal (render_spec does it inline).
                 self._interactive = False
                 self.last_notes.append(
                     f"The interactive view failed ({exc}); showing a static chart instead."
                 )
+                self.show_message("Switching to the static chart…")
+                self.static_fallback_needed.emit()
                 return self.last_notes
         self._install_static(result.figure)
         return self.last_notes
@@ -230,7 +254,9 @@ class ChartView(QWidget):
             self.page_loads += 1
             self._web.load(QUrl.fromLocalFile(str(_shell_page())))
         self._pending_json = figure_json
-        if self._shell_ready:
+        if self._shell_failed:
+            self._load_standalone()
+        elif self._shell_ready:
             self._push_figure()
 
     def _on_shell_loaded(self, ok: bool) -> None:
@@ -239,24 +265,31 @@ class ChartView(QWidget):
             self._shell_ready = True
             self._push_figure()
             return
-        # The shell could not load (a broken cache directory, say): fall back to writing the
-        # whole chart as one standalone page, which is what earlier versions always did.
-        if self._pending_json is not None and self._web is not None:
-            import plotly.io as pio
-
-            figure = pio.from_json(self._pending_json)
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".html", prefix="plotaviz_", delete=False, encoding="utf-8"
-            ) as handle:
-                handle.write(
-                    figure.to_html(
-                        include_plotlyjs=True, full_html=True, config={"responsive": True}
-                    )
-                )
-            self._temp_files.append(Path(handle.name))
+        # The shell could not load (a broken cache directory, say): from now on every chart is
+        # written as one standalone page, which is what earlier versions always did.
+        self._shell_failed = True
+        if self._web is not None:
             self._web.loadFinished.disconnect(self._on_shell_loaded)
-            self._web.load(QUrl.fromLocalFile(handle.name))
-            self._prune_temp_files()
+        self._load_standalone()
+
+    def _load_standalone(self) -> None:
+        """Load the pending chart as a self-contained page (the no-shell fallback)."""
+        if self._pending_json is None or self._web is None:
+            return
+        import plotly.io as pio
+
+        figure = pio.from_json(self._pending_json)
+        self._pending_json = None
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".html", prefix="plotaviz_", delete=False, encoding="utf-8"
+        ) as handle:
+            handle.write(
+                figure.to_html(include_plotlyjs=True, full_html=True, config={"responsive": True})
+            )
+        self._temp_files.append(Path(handle.name))
+        self.page_loads += 1
+        self._web.load(QUrl.fromLocalFile(handle.name))
+        self._prune_temp_files()
 
     def _push_figure(self) -> None:
         if self._pending_json is None or self._web is None:

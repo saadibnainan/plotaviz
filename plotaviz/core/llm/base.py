@@ -189,8 +189,10 @@ class Provider(ABC):
             return False, redact(f"{exc.message} {exc.hint or ''}".strip()), []
         except Exception as exc:  # SDK-specific errors not mapped above
             return False, redact(f"The check failed: {exc}"), []
+        if not models:
+            return True, "Connected, but no models are available yet.", models
         shown = ", ".join(models[:5]) + (" …" if len(models) > 5 else "")
-        return True, f"The key works. {len(models)} models available: {shown}", models
+        return True, f"Connected. {len(models)} models available: {shown}", models
 
     # ------------------------------------------------------------------ tasks
 

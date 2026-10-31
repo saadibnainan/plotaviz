@@ -27,7 +27,12 @@ class GeminiProvider(Provider):
                 "The Gemini provider needs the google-genai package.",
                 hint='Install it with: pip install "plotaviz[llm]"',
             ) from exc
-        client = genai.Client(api_key=self.require_key())
+        from google.genai import types
+
+        client = genai.Client(
+            api_key=self.require_key(),
+            http_options=types.HttpOptions(timeout=int(self.timeout * 1000)),
+        )
         try:
             names = [str(model.name or "") for model in client.models.list()]
         except Exception as exc:

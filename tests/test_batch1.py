@@ -311,3 +311,118 @@ def test_interactive_view_updates_in_place(qtbot, monkeypatch) -> None:
     qtbot.waitUntil(lambda: bool(types), timeout=10_000)
     assert view.page_loads == 1 and view.react_calls == 2
     assert types == ["bar"]
+
+
+# ---------------------------------------------------------------------------- review fixes
+
+
+class TestReviewFixes:
+    def test_interactive_failure_falls_back_to_a_static_chart(self, qtbot, monkeypatch) -> None:
+        from plotaviz.ui.interactive_view import ChartView
+
+        view = ChartView()
+        qtbot.addWidget(view)
+        view._interactive = True
+
+        def broken(_json: str) -> None:
+            raise RuntimeError("no GPU")
+
+        monkeypatch.setattr(view, "_install_interactive", broken)
+        df = pd.DataFrame({"a": range(20), "b": range(20)})
+        notes = view.render_spec(df, ChartSpec("scatter", x="a", y="b"))
+
+        assert view._canvas is not None and not view.interactive
+        assert any("static chart instead" in n for n in notes)
+
+    def test_failed_shell_keeps_updating_with_standalone_pages(self, qtbot, monkeypatch) -> None:
+        from plotaviz.ui.interactive_view import ChartView, webengine_available
+
+        if not webengine_available():
+            pytest.skip("QtWebEngine is not installed")
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            monkeypatch.setenv("QTWEBENGINE_DISABLE_SANDBOX", "1")
+        view = ChartView()
+        qtbot.addWidget(view)
+        df = pd.DataFrame({"a": range(20), "b": range(20)})
+        view.render_spec(df, ChartSpec("scatter", x="a", y="b"))
+        view._on_shell_loaded(False)  # simulate the shell page failing to load
+        loads = view.page_loads
+        view.render_spec(df, ChartSpec("line", x="a", y="b"))
+        assert view.page_loads == loads + 1  # a new standalone page, not a silent no-op
+
+    def test_key_check_result_for_another_provider_is_not_applied(
+        self, qtbot, settings, monkeypatch
+    ) -> None:
+        from plotaviz.ui.settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(settings=settings)
+        qtbot.addWidget(dialog)
+        dialog.provider_combo.setCurrentIndex(dialog.provider_combo.findData("anthropic"))
+        before = [dialog.model_combo.itemText(i) for i in range(dialog.model_combo.count())]
+
+        dialog._on_checked((True, "Connected.", ["gpt-x"]), "openai")
+
+        after = [dialog.model_combo.itemText(i) for i in range(dialog.model_combo.count())]
+        assert after == before and "Result for openai" in dialog.status_label.text()
+
+    def test_stale_render_does_not_cover_a_newer_message(
+        self, qtbot, window, csv_path, monkeypatch
+    ) -> None:
+        from plotaviz.ui import main_window
+
+        open_and_wait(qtbot, window, csv_path)
+        real = main_window.build_render
+
+        def slow(df, spec, **kwargs):
+            time.sleep(0.3)
+            return real(df, spec, **kwargs)
+
+        monkeypatch.setattr(main_window, "build_render", slow)
+        window._render_current()  # slow build in flight
+        window.analysis.spec = None
+        window._render_current()  # now there is nothing to draw
+        wait_idle(qtbot, window)
+
+        assert window.chart_view._placeholder is not None
+        assert "No chart" in window.chart_view._placeholder.text()
+
+    def test_runner_stays_busy_until_results_are_delivered(self, qtbot) -> None:
+        from plotaviz.ui.workers import TaskRunner
+
+        runner = TaskRunner()
+        results: list[int] = []
+        runner.start(lambda: 1, on_finished=results.append)
+        thread = runner._thread
+        assert thread is not None
+        thread.wait(5000)  # the thread is done, but its result is still queued
+        assert runner.busy and not results
+        qtbot.waitUntil(lambda: not runner.busy, timeout=5000)
+        assert results == [1]
+
+    def test_ndjson_polars_failure_falls_back_to_pandas(self, tmp_path, monkeypatch) -> None:
+        import polars as pl
+
+        target = tmp_path / "mixed.ndjson"
+        target.write_text("".join(json.dumps({"v": i}) + "\n" for i in range(100)))
+
+        def refuse(*_a, **_k):
+            raise pl.exceptions.ComputeError("schema mismatch")
+
+        monkeypatch.setattr(pl, "scan_ndjson", refuse)
+        result = loader.load(target, large_file_mb=0.0001)
+        assert len(result.df) == 100
+
+    def test_cache_is_skipped_for_huge_frames(self, csv_path, monkeypatch) -> None:
+        from plotaviz.core import analysis as analysis_module
+
+        monkeypatch.setattr(analysis_module, "CLEAN_CACHE_MAX_BYTES", 0)
+        analysis = Analysis.from_file(csv_path)
+        analysis.set_filters([QueryFilter("revenue > 2000")])
+        assert analysis._clean_cache is None
+        pd.testing.assert_frame_equal(analysis.df, analysis.pipeline.run(analysis.raw).df)
+
+    def test_no_models_is_not_reported_as_zero_listed(self, monkeypatch) -> None:
+        provider = OpenAIProvider(api_key="sk-test")
+        monkeypatch.setattr(provider, "list_models", lambda: [])
+        ok, message, _ = provider.check_key()
+        assert ok and "no models are available" in message

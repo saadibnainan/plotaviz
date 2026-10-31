@@ -40,6 +40,9 @@ from .profiler import DatasetProfile, profile
 from .session import Session
 from .spec import MATRIX_CHARTS, ChartSpec
 
+#: Largest cleaned frame kept in memory to make filter changes fast (bytes, shallow).
+CLEAN_CACHE_MAX_BYTES = 1_500_000_000
+
 #: Most charts a dashboard holds. Beyond this the tiles are too small to read.
 MAX_TILES = 12
 
@@ -176,8 +179,14 @@ class Analysis:
         cleaning, filters = steps[:first_filter], steps[first_filter:]
         key = json.dumps([s.to_dict() for s in cleaning], sort_keys=True, default=str)
         if self._clean_cache is None or self._clean_cache[0] != key:
-            self._clean_cache = (key, Pipeline(cleaning).run(self.raw))
-        cleaned = self._clean_cache[1]
+            self._clean_cache = None  # release the old frame before building the new one
+            cleaned = Pipeline(cleaning).run(self.raw)
+            # Caching keeps one more full frame alive while filters are applied. Above the
+            # limit, memory matters more than filter speed: replay cleaning each time instead.
+            if int(cleaned.df.memory_usage(deep=False).sum()) <= CLEAN_CACHE_MAX_BYTES:
+                self._clean_cache = (key, cleaned)
+        else:
+            cleaned = self._clean_cache[1]
         if not filters:
             return cleaned
         filtered = Pipeline(filters).run(cleaned.df)

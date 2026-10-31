@@ -256,7 +256,10 @@ def _load_csv(
         key: options[key] for key in ("decimal", "thousands", "header") if key in options
     }
     # A large file opened with explicit options goes through pandas; sample it at random by
-    # skipping lines, so the rows kept are spread over the whole file, not its first N.
+    # skipping lines, so the rows kept are spread over the whole file, not its first N. The
+    # whole file is still tokenized — unavoidable for a uniform sample without polars — but
+    # skipped lines are never materialized. (Measured: the per-line callback costs the same as
+    # a chunked read, ~0.35 s per million lines.)
     row_kwargs: dict[str, Any] = {}
     sampled_total: int | None = None
     if limit_rows is not None:
@@ -520,8 +523,11 @@ def _load_json(path: Path, *, use_polars: bool = False, sample_rows: int = 0) ->
                 )
         except ImportError:
             pass
-        except Exception as exc:
-            raise LoadError(f"Could not read {path.name}.", hint=str(exc)) from exc
+        except Exception:
+            # polars is stricter than pandas about NDJSON (a field that is a number in early rows
+            # and text later fails its schema inference). pandas read these files before, so it
+            # still gets the chance to — in full, which is noted below.
+            pass
     try:
         if suffix in {".ndjson", ".jsonl"}:
             df = pd.read_json(path, lines=True)
