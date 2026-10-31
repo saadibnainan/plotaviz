@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 
 from .errors import PlotError
+from .profiler import DERIVED_SUFFIXES, as_float, infer_role
 from .spec import MATRIX_CHARTS, ChartSpec
 
 #: Above this many points a scatter/line becomes unresponsive in a browser view.
@@ -125,9 +126,7 @@ def prepare(
     cap = int(max_categories or spec.options.get("top_n") or MAX_CATEGORIES)
 
     if spec.chart in MATRIX_CHARTS:
-        numeric = df.select_dtypes(include="number")
-        # Outlier flag columns are booleans-as-numbers; they pollute a correlation matrix.
-        numeric = numeric[[c for c in numeric.columns if not str(c).endswith("__outlier")]]
+        numeric = df[matrix_columns(df, spec)]
         if numeric.shape[1] < 2:
             raise PlotError(
                 "This chart needs at least two numeric columns.",
@@ -196,6 +195,29 @@ def prepare(
     return PreparedData(work, eff, spec, notes, sampled, rows_original)
 
 
+#: Columns a pair plot draws. Both renderers and the generated code use this one number.
+PAIR_PLOT_MAX_COLUMNS = 5
+
+
+def matrix_columns(df: pd.DataFrame, spec: ChartSpec) -> list[str]:
+    """The numeric measure columns a correlation heatmap or pair plot should use.
+
+    :meth:`Analysis.choose` and the selector pin the list in ``spec.options["columns"]`` from the
+    dataset profile. Without one — a spec built by hand — identifier-like columns are detected
+    here the same way the profiler does it, because a row ID in a correlation matrix is noise
+    that looks like signal.
+    """
+    numeric = [
+        c
+        for c in df.select_dtypes(include="number").columns
+        if not str(c).endswith(DERIVED_SUFFIXES)
+    ]
+    pinned = spec.options.get("columns")
+    if isinstance(pinned, list) and pinned:
+        return [c for c in pinned if c in numeric]
+    return [c for c in numeric if not infer_role(df[c])[1]]
+
+
 def _cap_categories(
     df: pd.DataFrame, column: str, limit: int, spec: ChartSpec
 ) -> tuple[pd.DataFrame, int]:
@@ -208,7 +230,9 @@ def _cap_categories(
     out = df.copy()
     mask = ~out[column].isin(keep)
     dropped = int(out.loc[mask, column].nunique())
-    out[column] = out[column].where(~mask, OTHER_LABEL)
+    # Cast first: a pandas `category` column (what Parquet and polars hand back) refuses a value
+    # outside its categories, so writing "Other" into it raised instead of bucketing.
+    out[column] = out[column].astype(object).where(~mask, OTHER_LABEL)
     return out, dropped
 
 
@@ -455,7 +479,9 @@ def build_plotly(df: pd.DataFrame, spec: ChartSpec, *, prepared: PreparedData | 
                 title=title,
             )
         elif chart == "pair_plot":
-            fig = px.scatter_matrix(frame, dimensions=list(frame.columns)[:6], title=title)
+            fig = px.scatter_matrix(
+                frame, dimensions=list(frame.columns)[:PAIR_PLOT_MAX_COLUMNS], title=title
+            )
             fig.update_traces(diagonal_visible=False, showupperhalf=False)
         else:  # pragma: no cover - validate() rejects unknown types first
             raise PlotError(f"No Plotly renderer for chart type {chart!r}.")
@@ -614,7 +640,9 @@ def build_matplotlib(
             if corr.size <= 100:
                 for i in range(len(corr.index)):
                     for j in range(len(corr.columns)):
-                        ax.text(j, i, f"{corr.iat[i, j]:.2f}", ha="center", va="center", fontsize=8)
+                        r = as_float(corr.iat[i, j])
+                        label = "" if r is None else f"{r:.2f}"
+                        ax.text(j, i, label, ha="center", va="center", fontsize=8)
             fig.colorbar(image, ax=ax, label="Pearson r")
         else:  # pragma: no cover
             raise PlotError(f"No matplotlib renderer for chart type {chart!r}.")
@@ -794,7 +822,7 @@ def _mpl_pair_plot(frame: pd.DataFrame, *, figsize: tuple[float, float], dpi: in
     """Scatter-matrix of up to five numeric columns, histograms on the diagonal."""
     import matplotlib.pyplot as plt
 
-    cols = list(frame.columns)[:5]
+    cols = list(frame.columns)[:PAIR_PLOT_MAX_COLUMNS]
     n = len(cols)
     fig, axes = plt.subplots(n, n, figsize=figsize, dpi=dpi, squeeze=False)
     for i, row_col in enumerate(cols):

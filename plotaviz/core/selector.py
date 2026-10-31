@@ -263,12 +263,17 @@ class ChartSelector:
         """
         mapping = candidate.get("map") or {}
         if not mapping and candidate.get("chart") in MATRIX_CHARTS:
+            options = dict(candidate.get("options") or {})
+            # Pin the measure columns so identifiers stay out of the matrix in every renderer
+            # and in the generated script.
+            usable = set(columns.get(NUMERIC, []))
+            options.setdefault("columns", [c for c in profile.columns if c in usable])
             return [
                 ChartSpec(
                     chart=str(candidate["chart"]),
                     why=str(candidate.get("why", "")),
                     score=float(candidate.get("base", 0.5)),
-                    options=dict(candidate.get("options") or {}),
+                    options=options,
                     agg=candidate.get("agg"),
                 )
             ]

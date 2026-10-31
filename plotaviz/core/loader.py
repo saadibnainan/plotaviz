@@ -13,6 +13,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,15 @@ DEFAULT_SAMPLE_ROWS: int = 200_000
 #: Encodings tried in order when the default UTF-8 read fails.
 _ENCODING_FALLBACKS = ("utf-8-sig", "latin-1", "cp1252")
 
+#: A decimal written with a comma, optionally with dot thousands grouping: ``1,5``, ``1.234,56``.
+_COMMA_DECIMAL = re.compile(r"^\s*[+-]?(?:\d{1,3}(?:\.\d{3})+|\d+),\d+\s*$")
+
+#: Dot used as a thousands separator inside a comma-decimal number.
+_DOT_GROUPING = re.compile(r"\d\.\d{3}(?:,|$)")
+
+#: Delimiters for which a comma cannot be the field separator, so it may be the decimal mark.
+_DECIMAL_COMMA_DELIMITERS = {";", "\t", "|"}
+
 
 @dataclass
 class LoadResult:
@@ -52,6 +62,9 @@ class LoadResult:
             underneath a saved project.
         size_bytes: Source file size.
         notes: Human-readable remarks worth surfacing (fallback encoding used, sheet chosen).
+        read_options: Reader keyword arguments that differ from the defaults (``sep``,
+            ``encoding``, ``decimal``, ``thousands``). The code generator replays them so the
+            exported script reads the file exactly as PlotaViz did.
     """
 
     df: pd.DataFrame
@@ -62,6 +75,7 @@ class LoadResult:
     file_hash: str = ""
     size_bytes: int = 0
     notes: list[str] = field(default_factory=list)
+    read_options: dict[str, Any] = field(default_factory=dict)
 
     @property
     def rows_loaded(self) -> int:
@@ -237,9 +251,34 @@ def _load_csv(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResult:
                 f"{path.name} is malformed and could not be parsed.",
                 hint=f"Detected delimiter {delimiter!r}. Underlying error: {exc}",
             ) from exc
+        options: dict[str, Any] = {}
+        if delimiter != ",":
+            options["sep"] = delimiter
         if encoding != "utf-8":
             notes.append(f"File is not UTF-8; read it as {encoding}.")
-        return LoadResult(df=df, path=path, engine="pandas", notes=notes)
+            options["encoding"] = encoding
+
+        locale_options = _decimal_comma_options(df, delimiter)
+        if locale_options:
+            try:
+                df = pd.read_csv(
+                    path,
+                    sep=delimiter,
+                    encoding=encoding,
+                    low_memory=False,
+                    decimal=locale_options["decimal"],
+                    thousands=locale_options.get("thousands"),
+                )
+            except (pd.errors.ParserError, ValueError):
+                pass  # keep the first read; the numbers stay text, which is visible and fixable
+            else:
+                options.update(locale_options)
+                mark = "comma decimals" + (
+                    " and dot thousands separators" if "thousands" in locale_options else ""
+                )
+                notes.append(f"Numbers use {mark} (European format); read them as numbers.")
+
+        return LoadResult(df=df, path=path, engine="pandas", notes=notes, read_options=options)
 
     raise LoadError(
         f"Could not decode {path.name} with any supported encoding.",
@@ -247,14 +286,50 @@ def _load_csv(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResult:
     )
 
 
+def _decimal_comma_options(df: pd.DataFrame, delimiter: str) -> dict[str, str]:
+    """Reader options for a file whose numbers use a comma as the decimal mark, or ``{}``.
+
+    A semicolon-delimited CSV from a German or French locale writes ``1,5`` and ``1.234,56``.
+    Read with the defaults, those columns arrive as text — and the date parser then claims them.
+    This looks for text columns that are overwhelmingly comma-decimal numbers. It refuses when
+    the file also contains dot-decimal floats, because one file cannot honour both conventions.
+    """
+    if delimiter not in _DECIMAL_COMMA_DELIMITERS:
+        return {}
+
+    candidates: list[pd.Series] = []
+    for column in df.columns:
+        series = df[column]
+        if pd.api.types.is_float_dtype(series):
+            values = series.dropna()
+            if not values.empty and bool(((values % 1) != 0).any()):
+                return {}  # real dot decimals elsewhere: mixed conventions, leave it alone
+            continue
+        if not (pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)):
+            continue
+        sample = series.dropna().astype(str).head(1000)
+        if sample.empty:
+            continue
+        if float(sample.str.match(_COMMA_DECIMAL).mean()) >= 0.9:
+            candidates.append(sample)
+
+    if not candidates:
+        return {}
+    options = {"decimal": ","}
+    if any(bool(sample.str.contains(_DOT_GROUPING).any()) for sample in candidates):
+        options["thousands"] = "."
+    return options
+
+
 def _load_excel(path: Path, *, sheet: str | int | None) -> LoadResult:
     """Read one sheet of an Excel workbook, defaulting to the first."""
     try:
         book = pd.ExcelFile(path)
     except ImportError as exc:
+        package = "xlrd" if path.suffix.lower() == ".xls" else "openpyxl"
         raise LoadError(
-            "Reading Excel files needs the openpyxl package.",
-            hint="Install it with: pip install openpyxl",
+            f"Reading {path.suffix.lower()} files needs the {package} package.",
+            hint=f"Install it with: pip install {package}",
         ) from exc
     except Exception as exc:
         raise LoadError(f"Could not open {path.name}.", hint=str(exc)) from exc
@@ -290,7 +365,10 @@ def _load_json(path: Path) -> LoadResult:
                     if isinstance(payload.get(key), list):
                         payload = payload[key]
                         break
-            df = pd.json_normalize(payload)
+            if _is_object_of_arrays(payload):
+                df = pd.DataFrame(payload)
+            else:
+                df = pd.json_normalize(payload)
     except ValueError as exc:
         raise LoadError(
             f"{path.name} is not valid JSON that maps onto a table.",
@@ -303,6 +381,20 @@ def _load_json(path: Path) -> LoadResult:
         raise LoadError(f"Could not read {path.name}.", hint=str(exc)) from exc
 
     return LoadResult(df=df, path=path, engine="pandas")
+
+
+def _is_object_of_arrays(payload: Any) -> bool:
+    """Whether ``payload`` is ``{"col": [...], ...}`` with equal-length, non-empty columns.
+
+    ``json_normalize`` turns that shape into a single row of lists, so it is built directly.
+    """
+    if not isinstance(payload, dict) or not payload:
+        return False
+    values = list(payload.values())
+    if not all(isinstance(v, list) for v in values):
+        return False
+    lengths = {len(v) for v in values}
+    return len(lengths) == 1 and lengths != {0}
 
 
 def _load_parquet(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResult:
@@ -343,15 +435,24 @@ def _load_parquet(path: Path, *, use_polars: bool, sample_rows: int) -> LoadResu
     return LoadResult(df=df, path=path, engine="pandas")
 
 
-def read_code_for(path: str | Path) -> str:
+def read_code_for(path: str | Path, options: dict[str, Any] | None = None) -> str:
     """Return the pandas one-liner that reads ``path``, for the generated script.
 
     Keeping this next to the readers means generated code stays in step with how PlotaViz
     actually loads a file instead of drifting from it.
+
+    Args:
+        path: The dataset.
+        options: :attr:`LoadResult.read_options` from the actual load. When given, the delimiter,
+            encoding, and number format are replayed exactly instead of re-sniffed.
     """
     path = Path(path)
     suffix = path.suffix.lower()
     literal = repr(str(path))
+    if options and suffix in CSV_SUFFIXES:
+        keys = ("sep", "encoding", "decimal", "thousands")
+        extra = "".join(f", {k}={options[k]!r}" for k in keys if k in options)
+        return f"pd.read_csv({literal}{extra})"
     if suffix in EXCEL_SUFFIXES:
         return f"pd.read_excel({literal})"
     if suffix in PARQUET_SUFFIXES:
