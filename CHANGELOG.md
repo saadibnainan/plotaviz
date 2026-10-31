@@ -7,12 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Fixes from the full-stack and QA audit — see [docs/AUDIT.md](docs/AUDIT.md) for the details and
+the open recommendations.
+
 ### Fixed
+
+- **Date filters no longer empty the dataset.** Date pickers start at the column's real range;
+  previously they sat at 2000-01-01 and, because building the panel fired a filter pass, opening
+  any dataset with a date column could leave zero rows. The end date is now inclusive.
+- A yes/no column with a blank cell no longer makes the whole file fail to load.
+- European-format numbers (`1,5`, `1.234,56`) in semicolon CSVs are read as numbers instead of
+  being classified as dates; short codes such as `t13` or `M2` are no longer read as dates either.
+- Cancelling a task hides the progress bar and re-enables the query bar.
+- Opening a dataset after a session no longer makes Ctrl+S overwrite that session file.
+- Filtering, changing a type, or any other replay keeps the chart you chose instead of switching
+  back to the top recommendation; loads no longer render twice.
+- A rejected filter is rolled back completely instead of breaking every later replay; a filter
+  that matches nothing says so.
+- Filter and type changes run off the UI thread and are queued, not dropped, while busy.
+- The category filter lists every value (up to 200), not just the ten most frequent.
+- "Other" bucketing works on `category` columns (Parquet/polars).
+- "Reset to detected" really restores the inferred type; restored overrides survive the next Apply.
+- Correlation heatmaps and pair plots exclude identifier columns; both renderers use 5 pair-plot
+  columns.
+- Generated scripts now match the app: mixed-format dates, yes/no booleans, category casts,
+  colour-NaN rows, top-N + "Other" capping, `FillMissing` columns, and the file's delimiter,
+  encoding, and decimal format.
+- Export asks before replacing an existing file.
+- JSON "object of arrays" files load as a table; the `.xls` error names `xlrd`.
 
 - Static (matplotlib) view no longer stacks an extra navigation toolbar above the chart on
   every re-render.
 - Interactive charts with a legend (colour splits, pies) no longer draw the title over the
   legend; the title gets its own row at the top of the figure.
+
+### Security
+
+- Consent to send data to an LLM provider is per provider and never pre-ticked. The previous
+  global setting is discarded, so you are asked again.
+- An Ollama host that is not on this machine requires consent like any remote provider.
+- Values from identifier and free-text columns are withheld from LLM prompts, and the consent
+  text now states exactly what is sent.
+- Opening a session that contains query filters shows the expressions and asks before pandas
+  evaluates them.
+- Titles are escaped in generated scripts.
 
 ## [0.1.0] - 2026-07-26
 

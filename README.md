@@ -225,8 +225,10 @@ Both return a **structured chart spec (JSON), never executable code.** The spec 
 against your real column names before anything renders; a hallucinated column is a clear error
 message, not a crash.
 
-**What gets sent:** column names, summary statistics, and up to 5 sample rows. Never the dataset.
-You are asked for consent before the first remote request.
+**What gets sent:** column names, summary statistics, and up to five example and most-frequent
+values per column — withheld entirely for identifier and free-text columns, which is where names
+and e-mail addresses live. Never the dataset. Nothing goes to a remote provider until you tick
+that provider's consent box in Settings; consent is per provider.
 
 **Where keys live:** your OS keychain, via `keyring`. Never a config file, never a session file,
 never the repo. Keys are redacted from logs and error messages.
@@ -239,8 +241,9 @@ ollama pull llama3.1
 ollama serve
 ```
 
-In **Settings → LLM provider**, choose **Ollama**. No API key, no network, no consent prompt —
-this is the right choice for sensitive data.
+In **Settings → LLM provider**, choose **Ollama**. With the default `localhost` host there is no
+API key, no network, and no consent prompt — this is the right choice for sensitive data. Point
+it at another machine and it is treated like any remote provider: consent is required.
 
 Hosted providers: Anthropic (Claude), OpenAI, and Google Gemini. Install with
 `pip install -e ".[llm]"`, then paste a key in Settings.
@@ -259,8 +262,8 @@ Hosted providers: Anthropic (Claude), OpenAI, and Google Gemini. Install with
   pipeline steps, so they serialize into sessions and generated code for free.
 - **Charts** — 15 types, interactive via Plotly in a WebEngine view, with a matplotlib canvas
   fallback when WebEngine is unavailable.
-- **Export** — PNG, SVG, PDF, JPEG, WebP at up to 1200 DPI; self-contained interactive HTML; or a
-  standalone Python script in matplotlib or Plotly flavour.
+- **Export** — PNG, SVG, PDF, JPEG, WebP at up to 1200 DPI; interactive HTML (loads plotly.js
+  from a CDN when opened); or a standalone Python script in matplotlib or Plotly flavour.
 - **Sessions** — `.pviz` files store the recipe, not the data, and warn if the source changed.
 - **Guardrails** — automatic downsampling with a visible notice, top-N category capping,
   virtualized preview, debounced re-render.
