@@ -306,8 +306,16 @@ class FilterPanel(QWidget):
             # reads back as 1.0. Compare within half a display step, or rounding alone excludes
             # the extreme rows.
             tolerance = 0.5 * 10 ** (-low.decimals())
-            if low.value() > full_low + tolerance or high.value() < full_high - tolerance:
-                steps.append(ColumnFilter(name, "between", [low.value(), high.value()]))
+            low_moved = low.value() > full_low + tolerance
+            high_moved = high.value() < full_high - tolerance
+            if low_moved or high_moved:
+                # An untouched bound uses the exact data value, not the rounded display value,
+                # or the extreme rows would be cut off by rounding.
+                bounds = [
+                    low.value() if low_moved else full_low,
+                    high.value() if high_moved else full_high,
+                ]
+                steps.append(ColumnFilter(name, "between", bounds))
 
         for name, (start, end) in self._datetime.items():
             first, last = self._date_bounds[name]

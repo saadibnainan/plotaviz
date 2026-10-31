@@ -159,9 +159,14 @@ class Analysis:
         if self.spec is not None and not self.auto_spec:
             try:
                 self.spec.validate(list(self.df.columns))
-                return
             except PlotaVizError:
                 pass
+            else:
+                # A matrix chart's columns were pinned from the profile, not picked by the user;
+                # follow type changes so a newly numeric column joins and a demoted one leaves.
+                if self.spec.chart in MATRIX_CHARTS and self.profile is not None:
+                    self.spec = self.spec.with_options(columns=self.profile.numeric)
+                return
         self.spec = self.recommendations[0] if self.recommendations else None
         self.auto_spec = True
 
@@ -463,7 +468,21 @@ class Analysis:
             inferred_types=_infer_types(load_result),
             load_options=dict(session.load_options),
         )
-        analysis.rerun()
+        try:
+            analysis.rerun()
+        except PreprocessError as exc:
+            # The data changed underneath the session and its filters no longer apply (or match
+            # nothing). Open without them rather than refusing to open at all — the user cannot
+            # loosen a filter in a session they cannot open.
+            if not analysis.pipeline.filters:
+                raise
+            dropped = "; ".join(repr(f) for f in analysis.pipeline.filters)
+            analysis.pipeline.replace_filters([])
+            analysis.rerun()
+            warning = (warning + "\n\n" if warning else "") + (
+                f"The saved filters could not be applied to the current data ({exc.message}), "
+                f"so the session was opened without them: {dropped}"
+            )
         if session.spec is not None:
             try:
                 analysis.choose(session.spec)

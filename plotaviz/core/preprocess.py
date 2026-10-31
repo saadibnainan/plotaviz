@@ -687,11 +687,16 @@ class ColumnFilter(Step):
         if self.op == "between":
             low, high = self.value
             if _is_date_only(high):
-                # A date-only upper bound means "through the end of that day", as in the app.
+                # A date-only upper bound means "through the end of that day", and the bounds
+                # take the column's timezone — exactly as apply() does.
                 return [
                     "# Column filter (the end date is inclusive)",
-                    f"df = df[df[{self.column!r}].between(pd.Timestamp({low!r}), "
-                    f"pd.Timestamp({high!r}) + pd.Timedelta(days=1) - pd.Timedelta(1, 'ns'))]",
+                    f"_lo = pd.Timestamp({low!r})",
+                    f"_hi = pd.Timestamp({high!r}) + pd.Timedelta(days=1) - pd.Timedelta(1, 'ns')",
+                    f"_tz = getattr(df[{self.column!r}].dt, 'tz', None)",
+                    "if _tz is not None:",
+                    "    _lo, _hi = _lo.tz_localize(_tz), _hi.tz_localize(_tz)",
+                    f"df = df[df[{self.column!r}].between(_lo, _hi)]",
                 ]
             return [
                 "# Column filter",

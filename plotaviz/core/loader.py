@@ -41,6 +41,12 @@ _ENCODING_FALLBACKS = ("utf-8-sig", "latin-1", "cp1252")
 #: A decimal written with a comma, optionally with dot thousands grouping: ``1,5``, ``1.234,56``.
 _COMMA_DECIMAL = re.compile(r"^\s*[+-]?(?:\d{1,3}(?:\.\d{3})+|\d+),\d+\s*$")
 
+#: A comma number with exactly three digits after the comma and no dot grouping: ``1,250``.
+_THREE_DECIMALS = re.compile(r"^\s*[+-]?\d{1,3},\d{3}\s*$")
+
+#: A day-first dotted date: ``01.05.2024``.
+_DOTTED_DATE = re.compile(r"^\s*\d{1,2}\.\d{1,2}\.\d{2,4}(?:\s.*)?$")
+
 #: Dot used as a thousands separator inside a comma-decimal number.
 _DOT_GROUPING = re.compile(r"\d\.\d{3}(?:,|$)")
 
@@ -187,8 +193,13 @@ def load(
         result = _load_json(path)
     else:
         # Explicit options are a pandas feature set; the polars fast path honours only defaults.
+        # A large file opened with options is still capped at `sample_rows`, through pandas.
         result = _load_csv(
-            path, use_polars=use_polars and not options, sample_rows=sample_rows, options=options
+            path,
+            use_polars=use_polars and not options,
+            sample_rows=sample_rows,
+            options=options,
+            limit_rows=sample_rows if (options and use_polars) else None,
         )
 
     if result.df.empty:
@@ -211,7 +222,12 @@ def load(
 
 
 def _load_csv(
-    path: Path, *, use_polars: bool, sample_rows: int, options: dict[str, Any] | None = None
+    path: Path,
+    *,
+    use_polars: bool,
+    sample_rows: int,
+    options: dict[str, Any] | None = None,
+    limit_rows: int | None = None,
 ) -> LoadResult:
     """Read a delimited text file, sniffing the separator and retrying on encoding errors.
 
@@ -273,7 +289,14 @@ def _load_csv(
     last_error: Exception | None = None
     for encoding in encodings:
         try:
-            df = pd.read_csv(path, sep=delimiter, encoding=encoding, low_memory=False, **extra)
+            df = pd.read_csv(
+                path,
+                sep=delimiter,
+                encoding=encoding,
+                low_memory=False,
+                nrows=limit_rows,
+                **extra,
+            )
         except UnicodeDecodeError as exc:
             last_error = exc
             continue
@@ -293,31 +316,56 @@ def _load_csv(
             used["encoding"] = encoding
 
         locale_options = {} if "decimal" in extra else _decimal_comma_options(df, delimiter)
+        if locale_options.pop("_grouping_conflict", None):
+            notes.append(
+                "Some numbers use '.' as a thousands separator, but the file also has dotted "
+                "dates, so those numbers were left as text. Set the thousands separator in "
+                "File → Open with options if the dates can be sacrificed, or convert the column."
+            )
         if locale_options:
             try:
+                # The user's own options (header row, an explicit thousands mark) win.
+                reread: dict[str, Any] = {**locale_options, **extra}
                 df = pd.read_csv(
                     path,
                     sep=delimiter,
                     encoding=encoding,
                     low_memory=False,
-                    decimal=locale_options["decimal"],
-                    thousands=locale_options.get("thousands"),
+                    nrows=limit_rows,
+                    **reread,
                 )
             except (pd.errors.ParserError, ValueError):
                 pass  # keep the first read; the numbers stay text, which is visible and fixable
             else:
-                used.update(locale_options)
+                used.update(reread)
                 mark = "comma decimals" + (
                     " and dot thousands separators" if "thousands" in locale_options else ""
                 )
                 notes.append(f"Numbers use {mark} (European format); read them as numbers.")
 
-        return LoadResult(df=df, path=path, engine="pandas", notes=notes, read_options=used)
+        result = LoadResult(df=df, path=path, engine="pandas", notes=notes, read_options=used)
+        if limit_rows is not None and len(df) >= limit_rows:
+            result.total_rows = max(_count_lines(path) - 1, len(df))
+            result.sampled = result.total_rows > len(df)
+            notes.append(
+                f"Large file — loaded the first {len(df):,} of about {result.total_rows:,} rows. "
+                "Statistics and charts are computed on this sample."
+            )
+        return result
 
     raise LoadError(
         f"Could not decode {path.name} with any supported encoding.",
         hint=f"Tried UTF-8, {', '.join(_ENCODING_FALLBACKS)}. Underlying error: {last_error}",
     )
+
+
+def _count_lines(path: Path, *, chunk_size: int = 1 << 20) -> int:
+    """Count newline-terminated lines without decoding the file."""
+    count = 0
+    with open(path, "rb") as handle:
+        while chunk := handle.read(chunk_size):
+            count += chunk.count(b"\n")
+    return count
 
 
 def _decimal_comma_options(df: pd.DataFrame, delimiter: str) -> dict[str, str]:
@@ -332,6 +380,7 @@ def _decimal_comma_options(df: pd.DataFrame, delimiter: str) -> dict[str, str]:
         return {}
 
     candidates: list[pd.Series] = []
+    dotted_dates = False
     for column in df.columns:
         series = df[column]
         if pd.api.types.is_float_dtype(series):
@@ -346,12 +395,24 @@ def _decimal_comma_options(df: pd.DataFrame, delimiter: str) -> dict[str, str]:
             continue
         if float(sample.str.match(_COMMA_DECIMAL).mean()) >= 0.9:
             candidates.append(sample)
+        elif float(sample.str.match(_DOTTED_DATE).mean()) >= 0.5:
+            dotted_dates = True
 
     if not candidates:
         return {}
+    # "1,250" / "12,000" with exactly three digits after every comma is US thousands grouping as
+    # often as it is a German decimal. Guessing wrong scales the column by 1000, so ambiguous
+    # columns are left as text — visible, and fixable in File → Open with options.
+    if all(bool(sample.str.match(_THREE_DECIMALS).all()) for sample in candidates):
+        return {}
     options = {"decimal": ","}
-    if any(bool(sample.str.contains(_DOT_GROUPING).any()) for sample in candidates):
+    # pandas strips the thousands mark anywhere in a field, so with dotted dates in the file
+    # ("01.05.2024") a "." thousands separator would turn every date into an integer.
+    grouped = any(bool(sample.str.contains(_DOT_GROUPING).any()) for sample in candidates)
+    if grouped and not dotted_dates:
         options["thousands"] = "."
+    elif grouped:
+        options["_grouping_conflict"] = "1"
     return options
 
 

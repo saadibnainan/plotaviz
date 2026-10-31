@@ -190,6 +190,12 @@ class ChartView(QWidget):
         The matplotlib toolbar is listed too: it is a separate widget from the canvas, and
         leaving it behind stacked one extra toolbar above the chart on every re-render.
         """
+        if self._canvas is not None:
+            # pyplot keeps every figure it creates until it is closed; without this each static
+            # re-render leaked the previous figure.
+            import matplotlib.pyplot as plt
+
+            plt.close(self._canvas.figure)
         for attr in ("_placeholder", "_toolbar", "_canvas", "_web"):
             widget = getattr(self, attr, None)
             if widget is not None:

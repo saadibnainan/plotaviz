@@ -90,9 +90,10 @@ class MainWindow(QMainWindow):
         self.session_path: Path | None = None
         self._session_view: dict[str, Any] = {}
         self.runner = TaskRunner(self)
-        # The latest replay requested while another task was running. Only the newest is kept —
-        # a burst of filter edits needs one replay with the final state, not one per edit.
-        self._pending: Callable[[], None] | None = None
+        # Work requested while another task was running, in order. Entries with the same key
+        # replace each other — a burst of filter edits needs one replay with the final state —
+        # but different kinds of change (a type override, then a filter) are all kept.
+        self._pending: list[tuple[str | None, Callable[[], None]]] = []
         self.runner.idle.connect(self._drain_pending)
 
         self._build_central()
@@ -533,6 +534,14 @@ class MainWindow(QMainWindow):
         spec = item.data(Qt.ItemDataRole.UserRole)
         if not isinstance(spec, ChartSpec):
             return
+        if self._defer_while_busy("choose", lambda: self._choose_and_render(spec)):
+            return
+        self._choose_and_render(spec)
+
+    def _choose_and_render(self, spec: ChartSpec) -> None:
+        """Make ``spec`` the active chart and draw it."""
+        if self.analysis is None:
+            return
         try:
             self.analysis.choose(spec)
         except PlotaVizError as exc:
@@ -545,6 +554,8 @@ class MainWindow(QMainWindow):
         """Redraw after the user tweaks the interpreted spec in the query bar."""
         if self.analysis is None:
             return
+        if self._defer_while_busy("choose", lambda: self._on_spec_edited(spec)):
+            return
         try:
             self.analysis.choose(spec)
         except PlotaVizError as exc:
@@ -556,6 +567,8 @@ class MainWindow(QMainWindow):
     def _on_customized(self, values: dict[str, Any]) -> None:
         """Apply title, labels, scales, and palette from the Customize panel."""
         if self.analysis is None or self.analysis.spec is None:
+            return
+        if self._defer_while_busy("customize", lambda: self._on_customized(values)):
             return
         try:
             self.analysis.choose(apply_customization(self.analysis.spec, values))
@@ -691,6 +704,8 @@ class MainWindow(QMainWindow):
             # the time it returns — so a cancelled replay still refreshes the panels.
             on_cancelled=refresh,
             queue=True,
+            # Undo and redo stack: two presses mean two steps, so they are never merged.
+            queue_key=None if label in {"Undoing…", "Redoing…"} else label,
         )
 
     def _after_rerun(self, *, sync_panels: bool = False) -> None:
@@ -990,26 +1005,31 @@ class MainWindow(QMainWindow):
         on_failed: Any = None,
         on_cancelled: Any = None,
         queue: bool = False,
+        queue_key: str | None = None,
     ) -> bool:
         """Run a callable on the worker thread with progress and cancellation.
 
         Args:
             queue: When a task is already running, run this one after it instead of refusing.
-                Only the most recent queued call is kept.
+            queue_key: Queued calls with the same key replace each other; ``None`` never does.
 
         Returns:
             Whether the task was started or queued. False means it was refused.
         """
         if self.runner.busy:
             if queue:
-                self._pending = lambda: self._run(
-                    fn,
-                    *args,
-                    label=label,
-                    on_finished=on_finished,
-                    on_failed=on_failed,
-                    on_cancelled=on_cancelled,
-                    queue=True,
+                self._enqueue(
+                    queue_key,
+                    lambda: self._run(
+                        fn,
+                        *args,
+                        label=label,
+                        on_finished=on_finished,
+                        on_failed=on_failed,
+                        on_cancelled=on_cancelled,
+                        queue=True,
+                        queue_key=queue_key,
+                    ),
                 )
                 self.statusBar().showMessage(f"{label} (queued)")
                 return True
@@ -1055,11 +1075,36 @@ class MainWindow(QMainWindow):
         )
         return True
 
+    def _enqueue(self, key: str | None, action: Callable[[], None]) -> None:
+        """Queue work for when the worker is free, replacing a queued entry with the same key."""
+        if key is not None:
+            for index, (existing, _) in enumerate(self._pending):
+                if existing == key:
+                    self._pending[index] = (key, action)
+                    return
+        self._pending.append((key, action))
+
+    def _defer_while_busy(self, key: str, action: Callable[[], None]) -> bool:
+        """Queue a UI-thread change to the analysis if a replay is running on the worker.
+
+        The worker replaces the pipeline, result, and active chart while it replays. Choosing a
+        chart or applying a customization at the same moment raced it — the choice could be
+        rolled back or read half-updated state — so such changes wait their turn instead.
+
+        Returns:
+            True if ``action`` was queued; the caller should stop. False means run it now.
+        """
+        if not self.runner.busy:
+            return False
+        self._enqueue(key, action)
+        self.statusBar().showMessage("Will apply when the current update finishes…")
+        return True
+
     def _drain_pending(self) -> None:
-        """Start the queued task, if any, now that the worker is free."""
-        pending, self._pending = self._pending, None
-        if pending is not None:
-            pending()
+        """Run queued work in order until something occupies the worker again."""
+        while self._pending and not self.runner.busy:
+            _, action = self._pending.pop(0)
+            action()
 
     def _end_task(self) -> None:
         """Hide the progress widgets."""
