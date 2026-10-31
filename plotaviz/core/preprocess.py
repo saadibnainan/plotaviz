@@ -733,6 +733,7 @@ class JoinDataset(Step):
         read_options: dict[str, Any] | None = None,
         sha256: str = "",
         suffix: str = "_right",
+        normalize: bool = True,
     ) -> None:
         if how not in {"left", "inner"}:
             raise PreprocessError(f"Unknown join type {how!r}.", hint="Use 'left' or 'inner'.")
@@ -744,6 +745,7 @@ class JoinDataset(Step):
         self.read_options = dict(read_options or {})
         self.sha256 = sha256
         self.suffix = suffix
+        self.normalize = bool(normalize)
         self._frame: pd.DataFrame | None = None
         self._changed = False
 
@@ -759,9 +761,17 @@ class JoinDataset(Step):
                     f"The joined file {self.path} is missing.",
                     hint="Put it back, or remove the join step in the Cleaning tab.",
                 )
-            result = loader.load(self.path, options=self.read_options or None)
-            self._changed = bool(self.sha256) and result.file_hash != self.sha256
-            self._frame, _ = NormalizeColumnNames().apply(result.df)
+            # Never sampled: a lookup table cut to a random subset would silently leave most
+            # rows unmatched. The file is also hashed here (once), for change detection.
+            result = loader.load(
+                self.path, options=self.read_options or None, large_file_mb=float("inf")
+            )
+            if not self.sha256:
+                self.sha256 = result.file_hash
+            self._changed = result.file_hash != self.sha256
+            self._frame = (
+                NormalizeColumnNames().apply(result.df)[0] if self.normalize else result.df
+            )
         return self._frame
 
     def apply(self, df: pd.DataFrame) -> tuple[pd.DataFrame, StepReport]:
@@ -802,16 +812,23 @@ class JoinDataset(Step):
     def to_code(self) -> list[str]:
         from .loader import read_code_for
 
+        rename = (
+            [
+                "import re",
+                "_other.columns = [",
+                "    (re.sub(r'_+', '_', re.sub(r'[^0-9a-zA-Z]+', '_',",
+                "     re.sub(r'([a-z0-9])([A-Z])', r'\\1_\\2', str(c).strip()))).strip('_')"
+                ".lower() or 'column')",
+                "    for c in _other.columns",
+                "]",
+            ]
+            if self.normalize
+            else []
+        )
         return [
-            "# Join another dataset (its names normalized the same way)",
-            "import re",
+            "# Join another dataset",
             f"_other = {read_code_for(self.path, self.read_options or None)}",
-            "_other.columns = [",
-            "    (re.sub(r'_+', '_', re.sub(r'[^0-9a-zA-Z]+', '_',",
-            "     re.sub(r'([a-z0-9])([A-Z])', r'\\1_\\2', str(c).strip()))).strip('_').lower()",
-            "     or 'column')",
-            "    for c in _other.columns",
-            "]",
+            *rename,
             f"df = df.merge(_other, on={self.on!r}, how={self.how!r}, "
             f"suffixes=('', {self.suffix!r}))",
         ]

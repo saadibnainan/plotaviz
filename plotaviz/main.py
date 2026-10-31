@@ -167,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     if len(inputs) > 1 or (args.input and any(_is_glob(p) for p in args.input)):
         return _run_batch(inputs, args, parser)
     args.input = inputs[0] if inputs else None
+    _name_bare_extensions(args)
     return _run_cli(args, parser)
 
 
@@ -254,7 +255,10 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             prefer = [c for c in (args.x, args.y, args.color) if c]
             if analysis.profile is None:
                 raise PlotaVizError("The dataset could not be profiled.")
-            ranked = ChartSelector().recommend(analysis.profile, prefer_columns=prefer)
+            from .core.selector import load_rules
+
+            rules = load_rules(analysis.rules_path) if analysis.rules_path else None
+            ranked = ChartSelector(rules).recommend(analysis.profile, prefer_columns=prefer)
             analysis.choose(ranked[0])
         elif analysis.spec is None:
             raise PlotaVizError(
@@ -362,6 +366,50 @@ def _run_dashboard(
     return 0
 
 
+def _unique_stems(inputs: list[str]) -> dict[str, str]:
+    """An output name per input: its stem, made unique when two inputs share one.
+
+    ``north/sales.csv`` and ``south/sales.csv`` become ``north_sales`` and ``south_sales``;
+    ``q1.csv`` and ``q1.xlsx`` become ``q1_csv`` and ``q1_xlsx`` — so no output overwrites
+    another.
+    """
+    stems = {source: Path(source).stem for source in inputs}
+    counts: dict[str, int] = {}
+    for stem in stems.values():
+        counts[stem] = counts.get(stem, 0) + 1
+    names: dict[str, str] = {}
+    used: set[str] = set()
+    for source, stem in stems.items():
+        path = Path(source)
+        name = stem
+        if counts[stem] > 1:
+            name = f"{path.parent.name}_{stem}" if path.parent.name else stem
+            if name in used:
+                name = f"{stem}_{path.suffix.lstrip('.')}"
+        base, number = name, 2
+        while name in used:
+            name, number = f"{base}_{number}", number + 1
+        used.add(name)
+        names[source] = name
+    return names
+
+
+def _name_bare_extensions(args: argparse.Namespace) -> None:
+    """``--export .png`` (just an extension) means "named after the input", in single-file mode
+    too — it used to write a hidden file literally called ``.png.png``."""
+    source = args.input or args.file
+    if not source:
+        return
+    folder = Path(args.output_dir) if args.output_dir else Path(source).parent
+    stem = Path(source).stem
+    for attr, template in (("export", "{stem}{ext}"), ("report", "{stem}_report{ext}")):
+        value = getattr(args, attr)
+        if value and value.startswith(".") and "/" not in value and "\\" not in value:
+            setattr(args, attr, str(folder / template.format(stem=stem, ext=value)))
+    if args.export_code and Path(args.export_code).name in {".py", "py"}:
+        args.export_code = str(folder / f"{stem}.py")
+
+
 def _is_glob(pattern: str) -> bool:
     return any(char in pattern for char in "*?[")
 
@@ -405,8 +453,18 @@ def _run_batch(inputs: list[str], args: argparse.Namespace, parser: argparse.Arg
         return text or default
 
     failures = 0
+    # Check settings that would otherwise fail on the first file — inside the loop their
+    # error would be swallowed by the per-file output capture and stop the whole batch.
+    _parse_size(args.size, parser)
+    if args.dashboard is not None:
+        from .core.analysis import MAX_TILES
+
+        if not 1 <= args.dashboard <= MAX_TILES:
+            parser.error(f"--dashboard must be between 1 and {MAX_TILES} (got {args.dashboard})")
+
+    stems = _unique_stems(inputs)
     for source in inputs:
-        stem = Path(source).stem
+        stem = stems[source]
         job = copy.copy(args)
         job.input, job.file, job.quiet = source, None, True
         job.export = str(out / f"{stem}{suffix(args.export, '.png')}") if args.export else None
@@ -419,7 +477,10 @@ def _run_batch(inputs: list[str], args: argparse.Namespace, parser: argparse.Arg
 
         captured = io.StringIO()
         with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
-            code = _run_cli(job, parser)
+            try:
+                code = _run_cli(job, parser)
+            except SystemExit as exc:  # a parser.error for this file: report it, carry on
+                code = exc.code if isinstance(exc.code, int) and exc.code else 2
         lines = [line.strip() for line in captured.getvalue().splitlines() if line.strip()]
         if code == 0:
             print(f"ok      {source} -> {', '.join(lines)}")

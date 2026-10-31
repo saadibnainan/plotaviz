@@ -247,3 +247,145 @@ class TestCliExtras:
             timeout=120,
         )
         assert result.returncode == 0 and "rows ×" in result.stdout
+
+
+# ---------------------------------------------------------------------------- review fixes
+
+
+class TestReviewFixes:
+    def test_second_join_can_use_columns_from_the_first(self, csv_path, tmp_path) -> None:
+        first = tmp_path / "first.csv"
+        pd.DataFrame({"region": ["north", "south", "east"], "zone_id": [1, 2, 3]}).to_csv(
+            first, index=False
+        )
+        second = tmp_path / "second.csv"
+        pd.DataFrame({"zone_id": [1, 2, 3], "zone_name": ["N", "S", "E"]}).to_csv(
+            second, index=False
+        )
+        analysis = Analysis.from_file(csv_path)
+        analysis.join_dataset(first, ["region"])
+        assert "zone_id" in analysis.join_base().columns
+        analysis.join_dataset(second, ["zone_id"])
+        assert "zone_name" in analysis.df.columns
+
+    def test_lookup_file_is_never_sampled(self, csv_path, tmp_path, monkeypatch) -> None:
+        from plotaviz.core import loader as loader_module
+
+        monkeypatch.setattr(loader_module, "DEFAULT_LARGE_FILE_MB", 0.0)
+        other = tmp_path / "big_lookup.csv"
+        pd.DataFrame({"region": ["north", "south", "east"] * 2000, "k": range(6000)}).to_csv(
+            other, index=False
+        )
+        step = JoinDataset(str(other), ["region"])
+        assert len(step.other()) == 6000
+
+    def test_preview_uses_the_frame_the_join_applies_to(self, tmp_path) -> None:
+        main_file = tmp_path / "main.csv"
+        pd.DataFrame({"day": ["2024-01-01", "2024-01-02"] * 20, "v": range(40)}).to_csv(
+            main_file, index=False
+        )
+        other = tmp_path / "days.csv"
+        pd.DataFrame({"day": ["2024-01-01"], "holiday": ["yes"]}).to_csv(other, index=False)
+        analysis = Analysis.from_file(main_file)
+        assert pd.api.types.is_datetime64_any_dtype(analysis.df["day"])  # typed in the result
+        base = analysis.join_base()
+        assert not pd.api.types.is_datetime64_any_dtype(base["day"])  # still text at join time
+        stats = join_preview(base, pd.read_csv(other), ["day"])
+        assert stats["matched_rows"] == 20
+
+    def test_drop_missing_keeps_unmatched_left_join_rows(self, csv_path, tmp_path) -> None:
+        other = tmp_path / "partial.csv"
+        pd.DataFrame({"region": ["north"], "boss": ["Ana"]}).to_csv(other, index=False)
+        analysis = Analysis.from_file(csv_path)
+        rows = len(analysis.df)
+        analysis.set_cleaning(missing="drop", outliers="off")
+        analysis.join_dataset(other, ["region"])
+        assert len(analysis.df) == rows
+        analysis.set_cleaning(missing="median", outliers="off")
+        assert analysis.df["boss"].isna().sum() > 0  # not invented for unmatched rows
+
+    def test_filter_widgets_span_unfiltered_data_after_undo(
+        self, qtbot, window, csv_path, regions_file
+    ) -> None:
+        open_and_wait(qtbot, window, csv_path)
+        window._on_filters_changed([QueryFilter("region == 'north'")])
+        wait_idle(qtbot, window)
+        window.analysis.join_dataset(regions_file, ["region"])
+        window.undo()  # removes the join: columns change, so the filter widgets are rebuilt
+        wait_idle(qtbot, window)
+
+        assert window.analysis.pipeline.filters  # the filter is still applied…
+        listing = window.filter_panel._categorical["region"]
+        assert listing.count() == 3  # …but the list still offers every region, not just north
+
+    def test_existing_sheet_column_is_kept(self, tmp_path: Path) -> None:
+        target = tmp_path / "book.xlsx"
+        with pd.ExcelWriter(target) as writer:
+            pd.DataFrame({"Sheet": ["a"], "v": [1]}).to_excel(writer, sheet_name="A", index=False)
+            pd.DataFrame({"Sheet": ["b"], "v": [2]}).to_excel(writer, sheet_name="B", index=False)
+        result = loader.load(target, options={"sheet": "*"})
+        assert list(result.df["source_sheet"]) == ["A", "B"]
+        assert list(result.df["Sheet"]) == ["a", "b"]
+        assert "source_sheet" in loader.read_code_for(target, result.read_options)
+
+    def test_batch_bad_setting_fails_up_front(self, tmp_path, timeseries_df) -> None:
+        for name in ("a", "b"):
+            timeseries_df.to_csv(tmp_path / f"{name}.csv", index=False)
+        with pytest.raises(SystemExit) as exit_info:
+            main(
+                [
+                    "--input",
+                    str(tmp_path / "*.csv"),
+                    "--output-dir",
+                    str(tmp_path / "out"),
+                    "--export",
+                    ".png",
+                    "--size",
+                    "10by6",
+                ]
+            )
+        assert exit_info.value.code == 2
+
+    def test_batch_names_do_not_collide(self, tmp_path, timeseries_df) -> None:
+        for folder in ("north", "south"):
+            (tmp_path / folder).mkdir()
+            timeseries_df.to_csv(tmp_path / folder / "sales.csv", index=False)
+        out = tmp_path / "out"
+        code = main(
+            [
+                "--input",
+                str(tmp_path / "north" / "sales.csv"),
+                str(tmp_path / "south" / "sales.csv"),
+                "--output-dir",
+                str(out),
+                "--export",
+                ".png",
+            ]
+        )
+        assert code == 0
+        assert sorted(p.name for p in out.iterdir()) == ["north_sales.png", "south_sales.png"]
+
+    def test_bare_extension_in_single_mode(self, csv_path: Path) -> None:
+        assert main(["--input", str(csv_path), "--export", ".png", "-q"]) == 0
+        assert (csv_path.parent / f"{csv_path.stem}.png").exists()
+
+    def test_rules_apply_with_x(self, csv_path: Path, tmp_path: Path) -> None:
+        rules = tmp_path / "rules.yaml"
+        rules.write_text(
+            "rules:\n  - name: only_kde\n    requires: { numeric: 1 }\n    candidates:\n"
+            "      - chart: kde\n        base: 0.9\n        map: { x: numeric.0 }\n"
+            "        why: custom\n"
+        )
+        code = main(
+            [
+                "--input",
+                str(csv_path),
+                "--x",
+                "revenue",
+                "--rules",
+                str(rules),
+                "--export",
+                str(tmp_path / "c.png"),
+            ]
+        )
+        assert code == 0

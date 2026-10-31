@@ -41,13 +41,20 @@ class JoinDialog(QDialog):
     """Pick a second file, the key columns, and the join type.
 
     Args:
-        current: The analysis's current cleaned frame, used for the match preview.
+        current: The frame the join will apply to (:meth:`Analysis.join_base` — renamed, with
+            earlier joins, unfiltered and not yet type-coerced), used for the match preview.
+        normalize: Whether the second file's names are normalized, as the join step will.
         start_dir: Folder the file picker opens in.
         parent: Parent widget.
     """
 
     def __init__(
-        self, current: pd.DataFrame, start_dir: str | Path = ".", parent: QWidget | None = None
+        self,
+        current: pd.DataFrame,
+        start_dir: str | Path = ".",
+        parent: QWidget | None = None,
+        *,
+        normalize: bool = True,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Join another dataset")
@@ -55,6 +62,7 @@ class JoinDialog(QDialog):
         self._current = current
         self._start_dir = Path(start_dir)
         self._other: pd.DataFrame | None = None
+        self._normalize = normalize
 
         layout = QVBoxLayout(self)
         intro = QLabel(
@@ -115,7 +123,7 @@ class JoinDialog(QDialog):
         except PlotaVizError as exc:
             self.preview_label.setText(str(exc))
             return False
-        self._other, _ = NormalizeColumnNames().apply(other)
+        self._other = NormalizeColumnNames().apply(other)[0] if self._normalize else other
         self.path_edit.setText(str(Path(path).expanduser().resolve()))
 
         shared = [c for c in self._current.columns if c in set(self._other.columns)]

@@ -259,6 +259,36 @@ class Analysis:
         """
         return self._transaction(lambda: self.pipeline.replace_filters(filters))
 
+    def unfiltered_profile(self) -> DatasetProfile | None:
+        """Profile of the cleaned data before filters — what filter widgets should span."""
+        if not self.pipeline.filters:
+            return self.profile
+        cleaned = self._clean_cache[1].df if self._clean_cache else None
+        if cleaned is None:
+            steps = [
+                s for s in self.pipeline.steps if not isinstance(s, (QueryFilter, ColumnFilter))
+            ]
+            cleaned = Pipeline(steps).run(self.raw).df
+        return profile(cleaned, overrides=self.type_overrides)
+
+    def join_base(self) -> pd.DataFrame:
+        """The frame a new join would apply to: renamed, with earlier joins, before any
+        coercion, cleaning, or filtering. The join dialog previews matches against this."""
+        return Pipeline(self.pipeline.steps[: self._join_insert_index()]).run(self.raw).df
+
+    def _join_insert_index(self) -> int:
+        """Where a new join goes: after renaming and after every earlier join, so a second
+        join can use columns the first one added."""
+        index = _after_rename(self.pipeline)
+        for position, step in enumerate(self.pipeline.steps):
+            if isinstance(step, JoinDataset):
+                index = max(index, position + 1)
+        return index
+
+    def _renames_columns(self) -> bool:
+        rename = next((s for s in self.pipeline if isinstance(s, NormalizeColumnNames)), None)
+        return bool(rename and rename.enabled)
+
     def join_dataset(
         self,
         path: str | Path,
@@ -269,8 +299,10 @@ class Analysis:
     ) -> PipelineResult:
         """Bring in columns from another file, matched on ``on``. Undoable.
 
-        The join runs right after column renaming, before type coercion, so the joined columns
-        are typed and cleaned like the rest; their roles are inferred from the second file.
+        The join runs after column renaming (and after earlier joins), before type coercion,
+        so the joined columns are typed like the rest; their roles are inferred from the second
+        file. Missing-value handling keeps to the main data's columns, so a left join's
+        unmatched rows are never dropped or filled with invented lookup values.
 
         Raises:
             LoadError: If the second file cannot be read.
@@ -282,29 +314,35 @@ class Analysis:
             list(on),
             how=how,
             read_options=options,
-            sha256=loader.file_hash(source),
+            normalize=self._renames_columns(),
         )
-        other = step.other()  # read it now, so a bad file fails before anything changes
+        other = step.other()  # read (and hash) it now, so a bad file fails before any change
 
-        main_names = set(NormalizeColumnNames().apply(self.raw.head(0))[0].columns)
-        other_types = {
-            name: prof.role for name, prof in profile(other).columns.items() if name not in on
-        }
+        before = set(self.join_base().columns)
         new_types = {
-            (f"{name}{step.suffix}" if name in main_names else name): role
-            for name, role in other_types.items()
+            (f"{name}{step.suffix}" if name in before else name): prof.role
+            for name, prof in profile(other).columns.items()
+            if name not in on
         }
+        main_columns = self._main_columns()
 
         def change() -> None:
-            self.pipeline.steps.insert(_after_rename(self.pipeline), step)
+            self.pipeline.steps.insert(self._join_insert_index(), step)
             for name, role in new_types.items():
                 self.inferred_types.setdefault(name, role)
             coerce = next((s for s in self.pipeline if isinstance(s, CoerceTypes)), None)
             if coerce is not None:
                 for name, role in new_types.items():
                     coerce.types.setdefault(name, role)
+            _restrict_fill(self.pipeline, main_columns)
 
         return self._transaction(change)
+
+    def _main_columns(self) -> list[str]:
+        """The main dataset's own column names (after renaming), without joined columns."""
+        rename = next((s for s in self.pipeline if isinstance(s, NormalizeColumnNames)), None)
+        head = self.raw.head(0)
+        return list(rename.apply(head)[0].columns if rename else head.columns)
 
     def set_cleaning(
         self,
@@ -350,13 +388,16 @@ class Analysis:
                 )
             )
 
+        main_columns = self._main_columns()
+
         def change() -> None:
             kept = [s for s in self.pipeline.steps if not isinstance(s, _CLEANING_STEPS)]
             at = 0
             for index, step in enumerate(kept):
-                if isinstance(step, (NormalizeColumnNames, CoerceTypes)):
+                if isinstance(step, (NormalizeColumnNames, CoerceTypes, JoinDataset)):
                     at = index + 1
             self.pipeline.steps = kept[:at] + cleaning + kept[at:]
+            _restrict_fill(self.pipeline, main_columns)
 
         return self._transaction(change)
 
@@ -692,6 +733,20 @@ def _infer_types(load_result: loader.LoadResult) -> dict[str, str]:
     """Inferred roles for the raw frame, keyed by the names the pipeline will produce."""
     raw_profile = profile(load_result.df, total_rows=load_result.total_rows)
     return _normalized_types({name: prof.role for name, prof in raw_profile.columns.items()})
+
+
+def _restrict_fill(pipeline: Pipeline, main_columns: list[str]) -> None:
+    """With a join present, limit missing-value handling to the main data's columns.
+
+    A left join leaves unmatched rows empty in the joined columns. ``drop`` would delete
+    exactly those rows (turning the join into an inner join) and imputation would invent lookup
+    values for them, so joined columns are left as they are.
+    """
+    if not any(isinstance(s, JoinDataset) for s in pipeline):
+        return
+    for step in pipeline:
+        if isinstance(step, FillMissing) and step.columns is None:
+            step.columns = list(main_columns)
 
 
 def _after_rename(pipeline: Pipeline) -> int:

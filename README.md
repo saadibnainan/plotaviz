@@ -168,6 +168,18 @@ plotaviz --input data.csv --chart box --x region --y revenue \
 
 `--json` makes `--describe` and `--recommend` machine-readable.
 
+```bash
+# Every CSV in a folder: one chart and one report per file
+plotaviz --input "data/*.csv" --output-dir out --export .png --report .html
+
+# A specific Excel sheet, or all sheets stacked with a 'sheet' column
+plotaviz --input book.xlsx --sheet Data --auto --export chart.pdf
+plotaviz --input book.xlsx --sheet '*' --report book.html
+
+# Your own chart rules instead of the shipped rules.yaml
+plotaviz --input data.csv --rules my_rules.yaml --recommend
+```
+
 ---
 
 ## How it decides
@@ -273,6 +285,16 @@ Hosted providers: Anthropic (Claude), OpenAI, and Google Gemini. Install with
   pipeline steps, so they serialize into sessions and generated code for free.
 - **Charts** — 15 types, interactive via Plotly in a WebEngine view, with a matplotlib canvas
   fallback when WebEngine is unavailable.
+- **Panels** — split a chart into one small chart per category (Customize → Panels by), when a
+  colour split has too many series to tell apart.
+- **Join** — File → Join another dataset adds columns from a second file matched on key columns,
+  with a match-rate preview; undoable, saved in sessions, replayed by generated code.
+- **Report** — File → Export report writes one offline HTML page or a PDF: summary, cleaning,
+  every column, missing values, correlations, recommended charts with their reasoning, and the
+  dashboard. Headless: `plotaviz --input data.csv --report report.html`.
+- **Preview** — sort by any column (the whole dataset, not just the visible rows), search all
+  rows, and see a column's statistics.
+- **Appearance** — View → Theme: follow the system, light, or dark. Exports always stay light.
 - **Dashboard** — pin several charts (Ctrl+D) to see a dataset's trend, breakdown, and
   distribution side by side. Tiles redraw from the current filters and cleaning, are saved in the
   session, and export together as one PNG/SVG/PDF grid, one offline HTML page, or one script.
@@ -359,9 +381,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for adding selector rules and LLM provide
 
 ## Roadmap
 
-Designed for, not built yet: auto EDA report export (HTML/PDF),
-OS-following dark mode, and joining two datasets on a key. The full list of open items, with
-reasoning, is in [docs/AUDIT.md](docs/AUDIT.md).
+Everything from the original roadmap is built — see [docs/AUDIT.md](docs/AUDIT.md) for what was
+done and what is deliberately left open.
 
 Explicitly out of scope for v1: plugin architecture, localization, real-time streaming, and live
 database connectors.

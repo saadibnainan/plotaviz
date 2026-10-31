@@ -510,14 +510,25 @@ def _load_all_sheets(path: Path, book: Any) -> LoadResult:
 
     For workbooks that split one table across sheets (one per month, per region…).
     """
-    frames = pd.read_excel(book, sheet_name=None)
-    df = pd.concat(frames, names=["sheet", None]).reset_index(level=0).reset_index(drop=True)
+    try:
+        frames = pd.read_excel(book, sheet_name=None)
+        existing = {str(c).lower() for frame in frames.values() for c in frame.columns}
+        column = next(
+            name for name in ("sheet", "source_sheet", "sheet_name_") if name not in existing
+        )
+        df = pd.concat(frames, names=[column, None]).reset_index(level=0)
+        df = df.reset_index(drop=True)
+    except Exception as exc:
+        raise LoadError(
+            f"Could not stack the sheets of {path.name}.",
+            hint=f"Open one sheet at a time instead. Underlying error: {exc}",
+        ) from exc
     return LoadResult(
         df=df,
         path=path,
         engine="pandas",
-        notes=[f"Stacked {len(frames)} sheets into one table; the 'sheet' column says which."],
-        read_options={"sheet_name": ALL_SHEETS},
+        notes=[f"Stacked {len(frames)} sheets into one table; the {column!r} column says which."],
+        read_options={"sheet_name": ALL_SHEETS, "sheet_column": column},
     )
 
 
@@ -652,8 +663,9 @@ def read_code_for(path: str | Path, options: dict[str, Any] | None = None) -> st
         return f"pd.read_csv({literal}{extra})"
     if suffix in EXCEL_SUFFIXES:
         if options and options.get("sheet_name") == ALL_SHEETS:
+            column = str(options.get("sheet_column", "sheet"))
             return (
-                f"pd.concat(pd.read_excel({literal}, sheet_name=None), names=['sheet', None])"
+                f"pd.concat(pd.read_excel({literal}, sheet_name=None), names=[{column!r}, None])"
                 ".reset_index(level=0).reset_index(drop=True)"
             )
         if options and "sheet_name" in options:

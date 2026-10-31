@@ -1113,9 +1113,12 @@ class MainWindow(QMainWindow):
                 [*self.analysis.profile.categorical, *self.analysis.profile.boolean]
             )
         if sync_panels:
-            if self.analysis.profile is not None:
-                # Columns may have come or gone (a join, an undo): rebuild the widgets first.
-                self.filter_panel.set_profile(self.analysis.profile)
+            current = self.filter_panel._profile
+            columns = set(self.analysis.df.columns)
+            if current is None or set(current.columns) != columns:
+                # Columns came or went (a join, an undo): rebuild the widgets, bounded by the
+                # unfiltered data so a filter can always be widened again.
+                self.filter_panel.set_profile(self.analysis.unfiltered_profile())
             self.filter_panel.set_filters(self.analysis.pipeline.filters)
             if self.analysis.profile:
                 self.type_panel.set_profile(
@@ -1343,7 +1346,10 @@ class MainWindow(QMainWindow):
         if self.analysis is None:
             return
         dialog = JoinDialog(
-            self.analysis.df, start_dir=self.analysis.load_result.path.parent, parent=self
+            self.analysis.join_base(),
+            start_dir=self.analysis.load_result.path.parent,
+            parent=self,
+            normalize=self.analysis._renames_columns(),
         )
         if dialog.exec() != JoinDialog.DialogCode.Accepted:
             return
