@@ -137,8 +137,11 @@ plotaviz samples/sales_timeseries.csv     # open the app with a file
    **Customize**.
 5. Narrow the data in **Filters** — per-column widgets, or a raw pandas query.
    **Edit → Undo** reverts any filter, type, or cleaning change.
-6. **File → Export** for the image, the interactive HTML, or the Python script.
-7. **File → Save session** writes a `.pviz` file that restores all of it later.
+6. Several charts worth keeping? **Pin to dashboard** (Ctrl+D) and look at them together on
+   the **Dashboard** tab.
+7. **File → Export** for the image, the interactive HTML, or the Python script — of the chart,
+   or of the whole dashboard.
+8. **File → Save session** writes a `.pviz` file that restores all of it later.
 
 ### Command line
 
@@ -270,6 +273,10 @@ Hosted providers: Anthropic (Claude), OpenAI, and Google Gemini. Install with
   pipeline steps, so they serialize into sessions and generated code for free.
 - **Charts** — 15 types, interactive via Plotly in a WebEngine view, with a matplotlib canvas
   fallback when WebEngine is unavailable.
+- **Dashboard** — pin several charts (Ctrl+D) to see a dataset's trend, breakdown, and
+  distribution side by side. Tiles redraw from the current filters and cleaning, are saved in the
+  session, and export together as one PNG/SVG/PDF grid, one offline HTML page, or one script.
+  Headless: `plotaviz --input data.csv --dashboard 4 --export overview.pdf`.
 - **Export** — PNG, SVG, PDF, JPEG, WebP at up to 1200 DPI; self-contained interactive HTML
   (plotly.js embedded, works offline); or a standalone Python script in matplotlib or Plotly flavour.
 - **Sessions** — `.pviz` files store the recipe, not the data, and warn if the source changed.
@@ -352,7 +359,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for adding selector rules and LLM provide
 
 ## Roadmap
 
-Designed for, not built yet: auto EDA report export (HTML/PDF), a multi-chart dashboard grid,
+Designed for, not built yet: auto EDA report export (HTML/PDF),
 OS-following dark mode, and joining two datasets on a key. The full list of open items, with
 reasoning, is in [docs/AUDIT.md](docs/AUDIT.md).
 

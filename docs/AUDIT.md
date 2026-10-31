@@ -102,6 +102,9 @@ flavours.
 4. **Undo/redo** (Edit menu) across filters, type overrides, cleaning, and removed steps.
 5. **Customize panel** — title, axis labels, log scales, category limit, sort order, histogram
    bins, colour-blind-safe Okabe–Ito palette; honoured by both renderers, sessions, and codegen.
+6. **Dashboard** — pin several charts to a Dashboard tab; tiles redraw with the current filters
+   and cleaning, are saved in the session, and export together as one grid image/PDF, one offline
+   HTML page, or one script (`plotaviz --dashboard N` headlessly).
 
 ## Second review (of this branch)
 
@@ -123,6 +126,32 @@ fixed with regression tests in `tests/test_reaudit.py`:
   timezone-aware columns; matrix charts kept stale pinned columns after a type change.
 - Also found: every static re-render leaked a matplotlib figure.
 
+## Performance
+
+1. Cache the cleaned frame *before* filters; a filter change should replay only the filter steps,
+   not CoerceTypes → Dedupe → FillMissing → FlagOutliers, and should not re-rank unless asked.
+2. Load plotly.js once into a persistent WebEngine page and update via `Plotly.react` instead of
+   writing and loading a ~4 MB HTML file per render.
+3. Build figures off the UI thread (`prepare()` + figure construction are pure).
+4. Replace first-N "sampling" with a random or stratified sample (or push aggregation into polars
+   so charts reflect the full file).
+
+## Remaining feature proposals (ranked by value ÷ effort)
+
+Done since the audit: the offline chart builder, import options, cleaning controls, undo/redo,
+chart customization (see above), and a **multi-chart dashboard** (pinned tiles, exported as one
+grid image/PDF, HTML page, or script). Still open:
+
+1. **Session quality-of-life** — relative paths and a "locate missing file" prompt (sessions
+   still store absolute paths), and an unsaved-changes prompt on close.
+2. **LLM transparency** — "preview what will be sent", a real key check (list models; sends no
+   data), model lists fetched from the provider.
+3. **Preview table** — sort, search, per-column stats panel.
+4. **Small multiples** — one chart split into a panel per category (a facet grid), for when a
+   colour split has too many series to read.
+5. **Roadmap items** — EDA report export, dataset join, OS-following dark mode.
+6. **CLI** — `--rules custom.yaml`, `--sheet`, batch mode over a glob.
+
 ## Test coverage
 
 Added `tests/test_audit_regressions.py` (core) and `tests/test_ui_regressions.py` (pytest-qt)
@@ -133,5 +162,6 @@ directory. Remaining gaps worth closing:
 - CI runs generated code only for the iris sample; run it for every chart type × flavour and
   compare the plotted rows with `prepare()` (the new tests do this for the drift cases).
 - No test exercises the polars large-file path with real sampling.
-- Features and the second review add `tests/test_features.py`, `tests/test_small_fixes.py`, and
-  `tests/test_reaudit.py`; the suite is now 469 tests.
+- Features, the dashboard, and the second review add `tests/test_features.py`,
+  `tests/test_small_fixes.py`, `tests/test_reaudit.py`, and `tests/test_dashboard.py`; the suite
+  is now 502 tests.

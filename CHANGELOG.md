@@ -12,6 +12,10 @@ Fixes from the full-stack and QA audit, and the first features it recommended â€
 
 ### Added
 
+- **Dashboard**: pin several charts (Ctrl+D) to a Dashboard tab of tiles that redraw with the
+  current filters and cleaning; open a tile to edit it and update it in place; reorder or remove
+  tiles. Saved in sessions; exported as one PNG/SVG/PDF grid, one offline HTML page, or one
+  script; `plotaviz --dashboard N` builds one from the top N recommendations headlessly.
 - **Chart builder without an LLM**: the chart/x/y/colour/aggregation row is always available.
 - **File â†’ Open with optionsâ€¦**: delimiter, encoding, decimal mark, thousands separator, header
   line, and Excel sheet â€” saved in sessions and replayed by generated scripts.
@@ -59,6 +63,9 @@ Fixes from the full-stack and QA audit, and the first features it recommended â€
   whose filters match nothing in changed data still opens (without them).
 - Decimal-comma detection no longer turns dotted dates into integers or reads US `1,250` as 1.25.
 - Static chart re-renders no longer leak matplotlib figures.
+- Date axes keep their tick labels in multi-chart figures (`autofmt_xdate` hid them).
+- Fixed an intermittent UI freeze when a background task finished: the worker object was
+  destroyed on its own thread, which could deadlock with the UI thread over the GIL.
 
 - Static (matplotlib) view no longer stacks an extra navigation toolbar above the chart on
   every re-render.
