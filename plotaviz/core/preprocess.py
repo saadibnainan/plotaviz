@@ -705,6 +705,130 @@ class ColumnFilter(Step):
         return ["# Column filter", f"df = df[df[{self.column!r}].isin({list(self.value)!r})]"]
 
 
+class JoinDataset(Step):
+    """Bring in columns from a second file by matching key columns — a pandas ``merge``.
+
+    The second file's column names are normalized exactly like the main file's, so keys line up
+    after renaming. Rows are matched on ``on``; ``how="left"`` keeps every row of the main data,
+    ``"inner"`` keeps only rows found in both. The report says how many rows matched, and warns
+    when the second file repeats a key — which multiplies rows, the classic join surprise.
+
+    Args:
+        path: The second dataset.
+        on: Key columns (normalized names) present in both.
+        how: ``"left"`` or ``"inner"``.
+        read_options: Import options for the second file (as for the main one).
+        sha256: Hash of the second file when the join was set up, to flag later changes.
+        suffix: Appended to second-file columns whose names clash with the main data.
+    """
+
+    kind = "join_dataset"
+    label = "Join another dataset"
+
+    def __init__(
+        self,
+        path: str,
+        on: list[str],
+        how: str = "left",
+        read_options: dict[str, Any] | None = None,
+        sha256: str = "",
+        suffix: str = "_right",
+    ) -> None:
+        if how not in {"left", "inner"}:
+            raise PreprocessError(f"Unknown join type {how!r}.", hint="Use 'left' or 'inner'.")
+        if not on:
+            raise PreprocessError("A join needs at least one key column.")
+        self.path = str(path)
+        self.on = [str(c) for c in on]
+        self.how = how
+        self.read_options = dict(read_options or {})
+        self.sha256 = sha256
+        self.suffix = suffix
+        self._frame: pd.DataFrame | None = None
+        self._changed = False
+
+    def other(self) -> pd.DataFrame:
+        """The second dataset with normalized column names (read once, then reused)."""
+        if self._frame is None:
+            from pathlib import Path
+
+            from . import loader
+
+            if not Path(self.path).exists():
+                raise PreprocessError(
+                    f"The joined file {self.path} is missing.",
+                    hint="Put it back, or remove the join step in the Cleaning tab.",
+                )
+            result = loader.load(self.path, options=self.read_options or None)
+            self._changed = bool(self.sha256) and result.file_hash != self.sha256
+            self._frame, _ = NormalizeColumnNames().apply(result.df)
+        return self._frame
+
+    def apply(self, df: pd.DataFrame) -> tuple[pd.DataFrame, StepReport]:
+        other = self.other()
+        missing = [c for c in self.on if c not in df.columns or c not in other.columns]
+        if missing:
+            raise PreprocessError(
+                f"The join key(s) {', '.join(map(repr, missing))} are not in both datasets.",
+                hint="Pick key columns that exist in both files (after name normalization).",
+            )
+        duplicated = int(other.duplicated(subset=self.on).sum())
+        how = cast(Literal["left", "inner"], self.how)
+        merged = df.merge(
+            other, on=self.on, how=how, suffixes=("", self.suffix), indicator="__pv_join"
+        )
+        matched = int((merged["__pv_join"] == "both").sum())
+        merged = merged.drop(columns="__pv_join")
+        added = [c for c in merged.columns if c not in df.columns]
+        name = self.path.replace("\\", "/").rsplit("/", 1)[-1]
+        parts = [
+            f"Joined {name} on {', '.join(self.on)} ({self.how}): {matched:,} of "
+            f"{len(merged):,} rows matched; added {len(added)} column(s)."
+        ]
+        if duplicated:
+            parts.append(
+                f"{duplicated:,} key value(s) repeat in {name}, so some rows were multiplied."
+            )
+        if self._changed:
+            parts.append(f"{name} has changed since the join was set up.")
+        return merged, StepReport(
+            self.kind,
+            " ".join(parts),
+            len(df),
+            len(merged),
+            {"matched": matched, "added": added, "duplicate_keys": duplicated},
+        )
+
+    def to_code(self) -> list[str]:
+        from .loader import read_code_for
+
+        return [
+            "# Join another dataset (its names normalized the same way)",
+            "import re",
+            f"_other = {read_code_for(self.path, self.read_options or None)}",
+            "_other.columns = [",
+            "    (re.sub(r'_+', '_', re.sub(r'[^0-9a-zA-Z]+', '_',",
+            "     re.sub(r'([a-z0-9])([A-Z])', r'\\1_\\2', str(c).strip()))).strip('_').lower()",
+            "     or 'column')",
+            "    for c in _other.columns",
+            "]",
+            f"df = df.merge(_other, on={self.on!r}, how={self.how!r}, "
+            f"suffixes=('', {self.suffix!r}))",
+        ]
+
+
+def join_preview(df: pd.DataFrame, other: pd.DataFrame, on: list[str]) -> dict[str, int]:
+    """How a join would turn out, before applying it: matched rows and repeated keys."""
+    keys = df[on].drop_duplicates()
+    hits = keys.merge(other[on].drop_duplicates(), on=on, how="inner")
+    matched_rows = int(df.merge(hits, on=on, how="inner").shape[0])
+    return {
+        "rows": len(df),
+        "matched_rows": matched_rows,
+        "duplicate_keys_in_other": int(other.duplicated(subset=on).sum()),
+    }
+
+
 # ---------------------------------------------------------------------------- pipeline
 
 

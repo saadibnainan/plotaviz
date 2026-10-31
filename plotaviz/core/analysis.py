@@ -29,6 +29,7 @@ from .preprocess import (
     Deduplicate,
     FillMissing,
     FlagOutliers,
+    JoinDataset,
     NormalizeColumnNames,
     Pipeline,
     PipelineResult,
@@ -88,6 +89,8 @@ class Analysis:
     _undo: list[_Snapshot] = field(default_factory=list, repr=False)
     _redo: list[_Snapshot] = field(default_factory=list, repr=False)
     dashboard: list[ChartSpec] = field(default_factory=list)
+    #: A custom ``rules.yaml`` (``--rules``); ``None`` uses the shipped one.
+    rules_path: str | None = None
     _clean_cache: tuple[str, PipelineResult] | None = field(default=None, repr=False)
 
     # ------------------------------------------------------------------ construction
@@ -109,8 +112,13 @@ class Analysis:
             flag_outliers: Whether to add outlier flag columns.
             **load_kwargs: Passed through to :func:`plotaviz.core.loader.load`.
         """
+        rules_path = load_kwargs.pop("rules_path", None)
         load_result = loader.load(path, **load_kwargs)
-        analysis = cls(load_result=load_result, load_options=dict(load_kwargs.get("options") or {}))
+        analysis = cls(
+            load_result=load_result,
+            load_options=dict(load_kwargs.get("options") or {}),
+            rules_path=str(rules_path) if rules_path else None,
+        )
 
         # Profile the raw frame first so the pipeline knows which columns need coercing.
         analysis.inferred_types = _infer_types(load_result)
@@ -154,7 +162,8 @@ class Analysis:
             total_rows=self.load_result.total_rows,
         )
         try:
-            self.recommendations = selector.ChartSelector().recommend(self.profile)
+            rules = selector.load_rules(self.rules_path) if self.rules_path else None
+            self.recommendations = selector.ChartSelector(rules).recommend(self.profile)
         except PlotaVizError:
             self.recommendations = []
         self._reconcile_spec()
@@ -249,6 +258,53 @@ class Analysis:
         and every later replay, and the saved session, would inherit it.
         """
         return self._transaction(lambda: self.pipeline.replace_filters(filters))
+
+    def join_dataset(
+        self,
+        path: str | Path,
+        on: list[str],
+        *,
+        how: str = "left",
+        options: dict[str, Any] | None = None,
+    ) -> PipelineResult:
+        """Bring in columns from another file, matched on ``on``. Undoable.
+
+        The join runs right after column renaming, before type coercion, so the joined columns
+        are typed and cleaned like the rest; their roles are inferred from the second file.
+
+        Raises:
+            LoadError: If the second file cannot be read.
+            PreprocessError: If a key is not in both datasets.
+        """
+        source = Path(path).expanduser().resolve()
+        step = JoinDataset(
+            str(source),
+            list(on),
+            how=how,
+            read_options=options,
+            sha256=loader.file_hash(source),
+        )
+        other = step.other()  # read it now, so a bad file fails before anything changes
+
+        main_names = set(NormalizeColumnNames().apply(self.raw.head(0))[0].columns)
+        other_types = {
+            name: prof.role for name, prof in profile(other).columns.items() if name not in on
+        }
+        new_types = {
+            (f"{name}{step.suffix}" if name in main_names else name): role
+            for name, role in other_types.items()
+        }
+
+        def change() -> None:
+            self.pipeline.steps.insert(_after_rename(self.pipeline), step)
+            for name, role in new_types.items():
+                self.inferred_types.setdefault(name, role)
+            coerce = next((s for s in self.pipeline if isinstance(s, CoerceTypes)), None)
+            if coerce is not None:
+                for name, role in new_types.items():
+                    coerce.types.setdefault(name, role)
+
+        return self._transaction(change)
 
     def set_cleaning(
         self,

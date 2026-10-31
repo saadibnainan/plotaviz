@@ -483,6 +483,8 @@ def _load_excel(path: Path, *, sheet: str | int | None) -> LoadResult:
         raise LoadError(f"Could not open {path.name}.", hint=str(exc)) from exc
 
     target = sheet if sheet is not None else 0
+    if target == ALL_SHEETS:
+        return _load_all_sheets(path, book)
     try:
         df = pd.read_excel(book, sheet_name=target)
     except Exception as exc:
@@ -497,6 +499,26 @@ def _load_excel(path: Path, *, sheet: str | int | None) -> LoadResult:
         notes.append(f"Workbook has {len(book.sheet_names)} sheets; loaded {chosen!r}.")
     read_options = {"sheet_name": target} if target != 0 else {}
     return LoadResult(df=df, path=path, engine="pandas", notes=notes, read_options=read_options)
+
+
+#: ``sheet`` value meaning "every sheet, stacked, with a ``sheet`` column".
+ALL_SHEETS = "*"
+
+
+def _load_all_sheets(path: Path, book: Any) -> LoadResult:
+    """Stack every sheet of a workbook into one table, recording each row's sheet.
+
+    For workbooks that split one table across sheets (one per month, per region…).
+    """
+    frames = pd.read_excel(book, sheet_name=None)
+    df = pd.concat(frames, names=["sheet", None]).reset_index(level=0).reset_index(drop=True)
+    return LoadResult(
+        df=df,
+        path=path,
+        engine="pandas",
+        notes=[f"Stacked {len(frames)} sheets into one table; the 'sheet' column says which."],
+        read_options={"sheet_name": ALL_SHEETS},
+    )
 
 
 def _load_json(path: Path, *, use_polars: bool = False, sample_rows: int = 0) -> LoadResult:
@@ -629,6 +651,11 @@ def read_code_for(path: str | Path, options: dict[str, Any] | None = None) -> st
         extra = "".join(f", {k}={options[k]!r}" for k in keys if k in options)
         return f"pd.read_csv({literal}{extra})"
     if suffix in EXCEL_SUFFIXES:
+        if options and options.get("sheet_name") == ALL_SHEETS:
+            return (
+                f"pd.concat(pd.read_excel({literal}, sheet_name=None), names=['sheet', None])"
+                ".reset_index(level=0).reset_index(drop=True)"
+            )
         if options and "sheet_name" in options:
             return f"pd.read_excel({literal}, sheet_name={options['sheet_name']!r})"
         return f"pd.read_excel({literal})"

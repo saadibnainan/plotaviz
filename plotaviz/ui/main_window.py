@@ -54,6 +54,7 @@ from ..core.errors import PlotaVizError
 from ..core.llm import LLMAssistant, OllamaProvider, get_provider
 from ..core.plotter import MAX_POINTS
 from ..core.preprocess import QueryFilter
+from ..core.report import export_report
 from ..core.session import SESSION_SUFFIX, Session
 from ..core.spec import ChartSpec
 from .cleaning_panel import CleaningPanel
@@ -63,6 +64,7 @@ from .export_dialog import ExportDialog
 from .filter_panel import FilterPanel
 from .import_dialog import ImportDialog
 from .interactive_view import ChartView, RenderResult, build_render
+from .join_dialog import JoinDialog
 from .nl_query_bar import NLQueryBar
 from .settings_dialog import SettingsDialog
 from .table_model import DataFrameModel, column_summary_html
@@ -336,6 +338,11 @@ class MainWindow(QMainWindow):
         self.recent_menu = file_menu.addMenu("Open &recent")
         self._rebuild_recent_menu()
 
+        self.join_action = QAction("&Join another dataset…", self)
+        self.join_action.triggered.connect(self.join_dataset)
+        self.join_action.setEnabled(False)
+        file_menu.addAction(self.join_action)
+
         file_menu.addSeparator()
 
         open_session = QAction("Open &session…", self)
@@ -361,6 +368,11 @@ class MainWindow(QMainWindow):
         self.export_action.triggered.connect(self.export)
         self.export_action.setEnabled(False)
         file_menu.addAction(self.export_action)
+
+        self.report_action = QAction("Export &report…", self)
+        self.report_action.triggered.connect(self.export_report)
+        self.report_action.setEnabled(False)
+        file_menu.addAction(self.report_action)
 
         file_menu.addSeparator()
         quit_action = QAction("&Quit", self)
@@ -620,7 +632,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(analysis.load_result.summary())
         self._remember_recent(analysis.load_result.path)
 
-        for action in (self.export_action, self.save_session_action, self.save_session_as_action):
+        for action in (
+            self.export_action,
+            self.save_session_action,
+            self.save_session_as_action,
+            self.report_action,
+            self.join_action,
+        ):
             action.setEnabled(True)
 
         self._set_dirty(False)
@@ -1095,6 +1113,9 @@ class MainWindow(QMainWindow):
                 [*self.analysis.profile.categorical, *self.analysis.profile.boolean]
             )
         if sync_panels:
+            if self.analysis.profile is not None:
+                # Columns may have come or gone (a join, an undo): rebuild the widgets first.
+                self.filter_panel.set_profile(self.analysis.profile)
             self.filter_panel.set_filters(self.analysis.pipeline.filters)
             if self.analysis.profile:
                 self.type_panel.set_profile(
@@ -1292,6 +1313,46 @@ class MainWindow(QMainWindow):
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(written.parent)))
 
         self._run(task, label=f"Exporting {target.name}…", on_finished=done)
+
+    def export_report(self) -> None:
+        """Write the analysis report (HTML or PDF) for the current state."""
+        if self.analysis is None:
+            return
+        source = self.analysis.load_result.path
+        suggested = source.with_name(f"{source.stem}_report.html")
+        chosen, _ = QFileDialog.getSaveFileName(
+            self, "Export report", str(suggested), "HTML report (*.html);;PDF report (*.pdf)"
+        )
+        if not chosen:
+            return
+        analysis, target = self.analysis, Path(chosen)
+
+        def task(progress: Any = None) -> Path:
+            if progress:
+                progress(40, f"Writing {target.name}…")
+            return export_report(analysis, target)
+
+        self._run(
+            task,
+            label=f"Exporting {target.name}…",
+            on_finished=lambda written: self.statusBar().showMessage(f"Saved {written}"),
+        )
+
+    def join_dataset(self) -> None:
+        """Add columns from a second file, matched on key columns."""
+        if self.analysis is None:
+            return
+        dialog = JoinDialog(
+            self.analysis.df, start_dir=self.analysis.load_result.path.parent, parent=self
+        )
+        if dialog.exec() != JoinDialog.DialogCode.Accepted:
+            return
+        values, analysis = dialog.result_values(), self.analysis
+        self._replay(
+            "Joining…",
+            lambda: analysis.join_dataset(values["path"], values["on"], how=values["how"]),
+            sync_panels=True,
+        )
 
     def save_session(self, *, ask: bool = False) -> bool:
         """Save the current state to a ``.pviz`` file. Returns whether it was saved."""
