@@ -1089,6 +1089,11 @@ class MainWindow(QMainWindow):
         self._refresh_dashboard(force=True)
         self._sync_cleaning_panel()
         self._sync_history_actions()
+        if self.analysis.profile is not None:
+            # Types and cleaning change which columns are categories.
+            self.customize_panel.set_facet_columns(
+                [*self.analysis.profile.categorical, *self.analysis.profile.boolean]
+            )
         if sync_panels:
             self.filter_panel.set_filters(self.analysis.pipeline.filters)
             if self.analysis.profile:

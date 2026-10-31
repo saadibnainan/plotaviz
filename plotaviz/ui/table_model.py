@@ -38,7 +38,10 @@ def _is_missing(value: Any) -> bool:
     ``pd.isna`` on them returns an array, which used to raise while painting the table."""
     if isinstance(value, (list, tuple, dict, set)):
         return False
-    return bool(pd.isna(value))
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):  # array-like cells (Parquet/Arrow lists) are values
+        return False
 
 
 def arrange_frame(
@@ -66,7 +69,19 @@ def arrange_frame(
             )
         out = out.loc[mask]
     if sort_column is not None and sort_column in out.columns:
-        out = out.sort_values(sort_column, ascending=ascending, na_position="last", kind="stable")
+        try:
+            out = out.sort_values(
+                sort_column, ascending=ascending, na_position="last", kind="stable"
+            )
+        except TypeError:
+            # A text column holding numbers too ("x", 1, …) cannot be compared: sort as text.
+            out = out.sort_values(
+                sort_column,
+                ascending=ascending,
+                na_position="last",
+                kind="stable",
+                key=lambda s: s.astype("string"),
+            )
     return out
 
 
@@ -131,6 +146,8 @@ class DataFrameModel(QAbstractTableModel):
         self._profile = profile
         self._rows = min(len(self._view), MAX_PREVIEW_ROWS)
         self._sort: tuple[str | None, bool] = (None, True)
+        self._generation = 0
+        self._arranged = True
         #: Use header tints that read on a dark background.
         self.dark = False
         self._search = ""
@@ -143,9 +160,14 @@ class DataFrameModel(QAbstractTableModel):
     # ------------------------------------------------------------------ data access
 
     def set_frame(self, df: pd.DataFrame, profile: DatasetProfile | None = None) -> None:
-        """Swap in a new frame and repaint, keeping the current sort and search."""
+        """Swap in a new frame and repaint, keeping the current sort and search.
+
+        The new frame is shown at once (unsorted) so headers and cells always come from the
+        same frame; the sorted/searched view replaces it when the worker finishes.
+        """
         self._df = df
         self._profile = profile
+        self._set_view(df, arranged=self._sort[0] is None and not self._search)
         self._arrange()
 
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
@@ -161,6 +183,10 @@ class DataFrameModel(QAbstractTableModel):
         self._arrange()
 
     def _arrange(self) -> None:
+        # Every request gets a generation; a result computed for an older request (an old
+        # search still running when the box was cleared, or the previous dataset's) is dropped.
+        self._generation += 1
+        generation = self._generation
         column, ascending = self._sort
         if column is None and not self._search:
             self._set_view(self._df)
@@ -170,15 +196,21 @@ class DataFrameModel(QAbstractTableModel):
         def work() -> pd.DataFrame:
             return arrange_frame(df, column, ascending, search)
 
-        if self.scheduler is None:
-            self._set_view(work())
-        else:
-            self.scheduler(work, self._set_view)
+        def done(view: pd.DataFrame) -> None:
+            if generation == self._generation:
+                self._set_view(view)
 
-    def _set_view(self, view: pd.DataFrame) -> None:
+        if self.scheduler is None:
+            done(work())
+        else:
+            self._arranged = False
+            self.scheduler(work, done)
+
+    def _set_view(self, view: pd.DataFrame, *, arranged: bool = True) -> None:
         self.beginResetModel()
         self._view = view
         self._rows = min(len(view), MAX_PREVIEW_ROWS)
+        self._arranged = arranged
         self.endResetModel()
         self.view_changed.emit()
 
@@ -195,6 +227,8 @@ class DataFrameModel(QAbstractTableModel):
     def status_text(self) -> str:
         """A line describing what the preview is showing."""
         rows, cols = len(self._df), len(self._df.columns)
+        if not self._arranged:
+            return f"{rows:,} rows × {cols} columns — sorting/searching…"
         if self._search:
             matched = len(self._view)
             shown = f"; previewing the first {self._rows:,}" if self.truncated else ""

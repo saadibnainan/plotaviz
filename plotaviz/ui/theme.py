@@ -81,10 +81,24 @@ def apply_theme(theme: str, app: Any = None) -> bool:
         # Fusion is the one built-in style that honours a custom palette on every platform.
         app.setStyle("Fusion")
         app.setPalette(dark_palette())
+    elif theme == "light":
+        # An explicit Light must be light even when the OS is dark. Native styles on macOS and
+        # Windows 11 follow the OS appearance; Fusion's own palette is always light.
+        app.setStyle("Fusion")
+        app.setPalette(app.style().standardPalette())
     else:
         app.setStyle(_original_style)
         app.setPalette(app.style().standardPalette())
     return dark
+
+
+def _is_default_dark(colour: Any) -> bool:
+    from matplotlib.colors import to_rgb
+
+    try:
+        return max(to_rgb(colour)) < 0.25
+    except ValueError:
+        return False
 
 
 def darken_figure(figure: Any) -> None:
@@ -93,6 +107,12 @@ def darken_figure(figure: Any) -> None:
     for text in figure.texts:
         text.set_color(DARK_FOREGROUND)
     for axes in figure.axes:
+        # Text placed on the background (pie labels, notes) defaults to black. Text drawn on
+        # top of an image (heatmap cell values) sits on the colour map and is left alone.
+        if not axes.images:
+            for text in axes.texts:
+                if _is_default_dark(text.get_color()):
+                    text.set_color(DARK_FOREGROUND)
         axes.set_facecolor(DARK_BACKGROUND)
         axes.title.set_color(DARK_FOREGROUND)
         axes.xaxis.label.set_color(DARK_FOREGROUND)

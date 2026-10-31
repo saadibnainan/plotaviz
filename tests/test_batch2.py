@@ -178,3 +178,100 @@ class TestFacets:
 
         assert window.analysis.spec.options["facet"] == "region"
         assert len(window.chart_view._canvas.figure.axes) == 3
+
+
+# ---------------------------------------------------------------------------- review fixes
+
+
+class TestReviewFixes:
+    def test_cleared_search_is_not_overwritten_by_a_late_result(self, qtbot) -> None:
+        from plotaviz.ui.table_model import DataFrameModel
+
+        model = DataFrameModel()
+        queued: list = []
+        model.scheduler = lambda work, done: queued.append((work, done))
+        model.set_frame(pd.DataFrame({"a": ["x", "y", "z"]}))
+        model.set_search("x")  # goes to the "worker"
+        model.set_search("")  # cleared at once
+        work, done = queued[-1]
+        done(work())  # the old search finishes late
+        assert model.rowCount() == 3
+
+    def test_new_frame_is_shown_at_once_while_arranging(self, qtbot) -> None:
+        from PySide6.QtCore import Qt
+
+        from plotaviz.ui.table_model import DataFrameModel
+
+        model = DataFrameModel()
+        model.scheduler = lambda work, done: None  # never finishes
+        model.set_frame(pd.DataFrame({"a": [1, 2]}))
+        model.sort(0, Qt.SortOrder.DescendingOrder)
+        model.set_frame(pd.DataFrame({"b": [1, 2, 3], "c": [4, 5, 6]}))
+        assert model.columnCount() == 2 and model.rowCount() == 3  # headers and cells agree
+        assert "sorting/searching" in model.status_text()
+
+    def test_mixed_type_column_sorts_as_text(self) -> None:
+        from plotaviz.ui.table_model import arrange_frame
+
+        out = arrange_frame(pd.DataFrame({"m": ["x", 1, None, "a"]}), "m", True, "")
+        assert list(out["m"])[:3] == [1, "a", "x"]
+
+    def test_array_cells_paint(self, qtbot) -> None:
+        from plotaviz.ui.table_model import DataFrameModel
+
+        model = DataFrameModel(pd.DataFrame({"v": [np.array([1, 2]), np.array([3])]}))
+        assert model.data(model.index(0, 0)) == "[1 2]"
+
+    def test_facet_options_must_name_one_column(self) -> None:
+        with pytest.raises(SpecError):
+            ChartSpec("histogram", x="a", options={"facet": ["a"]}).validate(["a"])
+
+    def test_missing_facet_values_get_their_own_panel(self) -> None:
+        df = pd.DataFrame(
+            {
+                "v": np.arange(30.0),
+                "flag": pd.array([True, False, None] * 10, dtype="boolean"),
+            }
+        )
+        figure = plotter.build_matplotlib(
+            df, ChartSpec("histogram", x="v", options={"facet": "flag"}), dpi=40
+        )
+        titles = sorted(ax.get_title() for ax in figure.axes)
+        assert titles == ["flag = (missing)", "flag = False", "flag = True"]
+
+    def test_generated_facet_script_survives_all_missing(self, tmp_path: Path) -> None:
+        source = tmp_path / "d.csv"
+        pd.DataFrame({"v": np.arange(20.0), "g": [None] * 20}).to_csv(source, index=False)
+        analysis = Analysis.from_file(source)
+        analysis.set_type_overrides({"g": "categorical"})
+        spec = ChartSpec("histogram", x="v", options={"facet": "g"})
+        analysis.spec = spec
+        script = codegen.write(tmp_path / "p.py", analysis.generate_code())
+        result = subprocess.run(
+            [sys.executable, str(script), "--no-show", "--save", str(tmp_path / "o.png")],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        assert result.returncode == 0, result.stderr
+
+    def test_dark_figure_recolours_background_text(self, timeseries_df) -> None:
+        from plotaviz.ui.theme import darken_figure
+
+        figure = plotter.build_matplotlib(
+            timeseries_df, ChartSpec("pie", x="region", agg="count"), dpi=40
+        )
+        darken_figure(figure)
+        colours = {t.get_color() for t in figure.axes[0].texts}
+        assert "#e6e6e6" in colours
+
+    def test_explicit_light_uses_a_light_palette(self, qtbot) -> None:
+        from PySide6.QtGui import QPalette
+        from PySide6.QtWidgets import QApplication
+
+        from plotaviz.ui.theme import apply_theme
+
+        assert apply_theme("light") is False
+        window = QApplication.instance().palette().color(QPalette.ColorRole.Window)
+        assert window.lightness() > 150
+        apply_theme("system")

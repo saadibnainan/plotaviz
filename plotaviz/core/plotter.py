@@ -685,7 +685,8 @@ def build_matplotlib(
 
     try:
         if spec.facet is not None and spec.facet in frame.columns:
-            rows = math.ceil(min(frame[spec.facet].nunique(), MAX_FACETS + 1) / 3)
+            panels = frame[spec.facet].nunique() + int(frame[spec.facet].isna().any())
+            rows = math.ceil(min(max(panels, 1), MAX_FACETS + 2) / 3)
             fig = Figure(
                 figsize=(figsize[0], figsize[1] * max(1.0, 0.65 * rows)),
                 dpi=dpi,
@@ -980,21 +981,31 @@ def _mpl_pair_plot(
     return fig
 
 
+#: Marker for the panel holding rows whose facet value is missing.
+_MISSING_PANEL = object()
+
+
 def _draw_facets(fig: Any, cell: Any, data: PreparedData) -> None:
     """Draw one panel per value of the spec's facet column into a grid cell."""
     column = str(data.spec.facet)
-    values = [v for v in pd.unique(data.df[column]) if not (isinstance(v, float) and pd.isna(v))]
+    series = data.df[column]
+    values: list[Any] = list(pd.unique(series.dropna()))
     if OTHER_LABEL in values:  # keep the "Other" bucket last
         values = [v for v in values if v != OTHER_LABEL] + [OTHER_LABEL]
+    missing = series.isna()
+    if bool(missing.any()):
+        values.append(_MISSING_PANEL)  # rows with no value get their own panel, not dropped
     columns = min(3, max(1, len(values)))
     rows = math.ceil(len(values) / columns) if values else 1
     grid = cell.subgridspec(rows, columns)
     for index, value in enumerate(values):
-        subset = data.df[data.df[column] == value]
+        mask = missing if value is _MISSING_PANEL else (series == value).fillna(False)
+        subset = data.df[mask.astype(bool)]
         panel = PreparedData(subset, data.spec, data.source_spec, [], False, len(subset))
         ax = fig.add_subplot(grid[index // columns, index % columns])
         _draw_into(fig, ax, panel)
-        ax.set_title(f"{column} = {value}", fontsize=9)
+        label = "(missing)" if value is _MISSING_PANEL else value
+        ax.set_title(f"{column} = {label}", fontsize=9)
 
 
 def _draw_pair_plot(fig: Any, cell: Any, frame: pd.DataFrame, *, color: str) -> None:

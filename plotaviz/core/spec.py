@@ -135,6 +135,11 @@ class ChartSpec:
         if columns is not None:
             known = set(columns)
             facet = self.options.get("facet") or None
+            if facet is not None and not isinstance(facet, str):
+                raise SpecError(
+                    "Panels must be split by one column name.",
+                    hint=f"Got {facet!r}.",
+                )
             for role, col in (
                 ("x", self.x),
                 ("y", self.y),
