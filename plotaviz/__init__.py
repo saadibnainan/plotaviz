@@ -13,7 +13,7 @@ The package is split into two halves that must not blur together:
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __app_name__ = "PlotaViz"
 
 __all__ = ["__app_name__", "__version__"]

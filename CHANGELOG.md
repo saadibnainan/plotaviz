@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-01
+
 ### Added (since the audit-fixes merge)
 
 - **Speed:** filters replay on a cached cleaned frame (1M rows: ≈2.0 s → 0.45 s per change);
@@ -141,5 +143,6 @@ Fixes from the full-stack and QA audit, and the first features it recommended �
 - **CLI mode** — `plotaviz --input data.csv --auto --export chart.png` for scripting and CI.
 - Four sample datasets, each exercising a different chart path.
 
-[Unreleased]: https://github.com/saadibnainan/plotaviz/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/saadibnainan/plotaviz/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/saadibnainan/plotaviz/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/saadibnainan/plotaviz/releases/tag/v0.1.0
