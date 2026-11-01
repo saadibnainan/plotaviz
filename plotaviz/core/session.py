@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .. import __version__
 from .errors import SessionError
 from .loader import file_hash
 from .preprocess import Pipeline
@@ -59,7 +60,7 @@ class Session:
     spec: ChartSpec | None = None
     view: dict[str, Any] = field(default_factory=dict)
     dashboard: list[ChartSpec] = field(default_factory=list)
-    app_version: str = "0.1.0"
+    app_version: str = __version__
     saved_at: str = ""
     version: int = SESSION_VERSION
     #: Hash of the source as found by the last :meth:`check_source`, so the loader can reuse it

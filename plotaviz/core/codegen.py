@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .. import __version__
 from .errors import ExportError
 from .loader import read_code_for
 from .plotter import (
@@ -56,7 +57,7 @@ def generate(
     source_path: str | Path,
     *,
     flavour: str = "matplotlib",
-    version: str = "0.1.0",
+    version: str = __version__,
     output_image: str | None = None,
     read_options: dict[str, Any] | None = None,
 ) -> str:
@@ -175,7 +176,7 @@ def generate_dashboard(
     source_path: str | Path,
     *,
     flavour: str = "matplotlib",
-    version: str = "0.1.0",
+    version: str = __version__,
     read_options: dict[str, Any] | None = None,
 ) -> str:
     """Emit one standalone script that reproduces every dashboard tile.
