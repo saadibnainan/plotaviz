@@ -7,23 +7,16 @@
 [![Qt: LGPLv3](https://img.shields.io/badge/Qt-LGPLv3-orange)](THIRD_PARTY_LICENSES.md)
 [![Code style: ruff](https://img.shields.io/badge/style-ruff-261230)](https://docs.astral.sh/ruff/)
 
-**A cross-platform desktop app that works out the right chart for your data, draws it, and hands
-you the Python code that reproduces it.**
+For analysts, students and researchers: open a CSV or Excel file and PlotaViz picks the right chart, tells you why, and gives you the Python code that redraws it — all offline.
 
-Open a CSV. PlotaViz cleans it, works out what each column actually is, ranks the charts that suit
-the data — and tells you *why* it picked each one. Then it exports the image, or the standalone
-script.
+<!-- DEMO GIF (5–10 s): `plotaviz samples/sales_timeseries.csv` → window opens → ranked charts with their "why" → click an alternative. Save as docs/demo.gif, then uncomment: ![PlotaViz picking a chart for a CSV](https://raw.githubusercontent.com/saadibnainan/plotaviz/main/docs/demo.gif) -->
 
-It runs entirely offline. An LLM is optional and only ever adds two things: a second opinion when
-the ranking is close, and a query bar you can type "revenue by region over time" into.
+```bash
+pipx install plotaviz
+```
 
-<!-- Screenshots go here. For a GUI project this is the single biggest factor in whether anyone
-     tries it, so add them as soon as there is a working chart to show. -->
-
-| | |
-|---|---|
-| ![Main window](docs/screenshots/main-window.png) | ![Recommendations](docs/screenshots/recommendations.png) |
-| *Preview, cleaning report, and the chart* | *Ranked alternatives, each with its reasoning* |
+An LLM is optional and only ever adds two things: a second opinion when the ranking is close, and
+a query bar you can type "revenue by region over time" into.
 
 ---
 
@@ -51,9 +44,11 @@ Python 3.11 or newer.
 ### From PyPI (all platforms)
 
 ```bash
-pip install plotaviz
+pipx install plotaviz
 plotaviz
 ```
+
+Plain `pip install plotaviz` works too, inside a virtual environment.
 
 ### From source (contributing / latest main)
 
@@ -71,8 +66,8 @@ plotaviz
 Apple Silicon and Intel are both supported.
 
 ```bash
-brew install python@3.11          # if you need it
-pip install plotaviz
+brew install pipx                 # if you need it
+pipx install plotaviz
 ```
 
 A prebuilt `.app` is attached to each [release](https://github.com/saadibnainan/plotaviz/releases).
@@ -100,7 +95,7 @@ sudo dnf install python3-devel libglvnd-egl xcb-util-cursor libxkbcommon-x11
 sudo pacman -S python libxkbcommon-x11 xcb-util-cursor
 ```
 
-Then either `pip install plotaviz`, or grab the **AppImage** from the releases page:
+Then either `pipx install plotaviz`, or grab the **AppImage** from the releases page:
 
 ```bash
 chmod +x PlotaViz-*.AppImage
