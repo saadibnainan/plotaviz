@@ -158,8 +158,9 @@ class NLQueryBar(QWidget):
             self.input.setPlaceholderText("Set up an LLM provider to ask for charts in words")
             self.show_status(
                 "No LLM provider is configured, so the query bar is off. Chart recommendations "
-                "work without one. Configure a provider in Settings, or install Ollama to keep "
-                "everything on this machine."
+                "work without one. Configure a provider in Settings — an installed Claude Code or "
+                "Codex CLI is picked up automatically and uses your existing plan — or install "
+                "Ollama to keep everything on this machine."
             )
 
     def set_busy(self, busy: bool) -> None:

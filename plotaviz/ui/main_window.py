@@ -51,7 +51,7 @@ from .. import __app_name__, __version__
 from ..core import loader
 from ..core.analysis import Analysis
 from ..core.errors import PlotaVizError
-from ..core.llm import LLMAssistant, OllamaProvider, get_provider
+from ..core.llm import LLMAssistant, OllamaProvider, detected_provider, get_provider
 from ..core.plotter import MAX_POINTS
 from ..core.preprocess import QueryFilter
 from ..core.report import export_report
@@ -1136,9 +1136,20 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ LLM
 
+    def _provider_name(self) -> str:
+        """The provider in use: the one chosen in Settings, else one detected on this machine.
+
+        "Never chosen" and "chose none" are different: an explicit "None" in Settings is stored
+        as an empty string and respected, while a missing key falls back to auto-detection, so an
+        installed, signed-in Claude Code works out of the box.
+        """
+        if self.settings.contains("llm/provider"):
+            return str(self.settings.value("llm/provider", "") or "")
+        return detected_provider()
+
     def _assistant(self) -> LLMAssistant:
         """Build an assistant from the current settings."""
-        name = str(self.settings.value("llm/provider", "") or "")
+        name = self._provider_name()
         if not name:
             return LLMAssistant(None)
         kwargs: dict[str, Any] = {}
@@ -1165,13 +1176,39 @@ class MainWindow(QMainWindow):
         """
         assistant = self._assistant()
         provider = assistant.provider
-        usable = (
-            provider is not None
-            and (assistant.consent or not provider.sends_data_off_machine)
-            and (isinstance(provider, OllamaProvider) or provider.is_configured())
+        # Consent is not required to enable the controls: it is asked for, once, the first time
+        # a request would actually leave the machine (see _ensure_consent).
+        usable = provider is not None and (
+            isinstance(provider, OllamaProvider) or provider.is_configured()
         )
-        self.nl_bar.set_enabled_for_provider(usable, provider.name if provider else "")
+        label = (provider.label or provider.name) if provider else ""
+        self.nl_bar.set_enabled_for_provider(usable, label)
         self.refine_button.setEnabled(usable)
+
+    def _ensure_consent(self, assistant: LLMAssistant) -> bool:
+        """Ask before the first request that would send anything off this machine.
+
+        Returns whether the request may go ahead. A yes is remembered for that provider only,
+        exactly as if the box had been ticked in Settings.
+        """
+        provider = assistant.provider
+        prompt = assistant.consent_prompt()
+        if provider is None or assistant.consent or prompt is None:
+            return True
+        label = provider.label or provider.name
+        answer = QMessageBox.question(
+            self,
+            f"Send a summary to {label}?",
+            f"{prompt}\n\nAllow this for {label} from now on? You can change it in Settings.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
+        self.settings.setValue(f"llm/consent/{provider.name}", True)
+        self.settings.sync()
+        assistant.consent = True
+        return True
 
     def _on_question(self, question: str) -> None:
         """Turn a natural-language question into a chart."""
@@ -1180,6 +1217,9 @@ class MainWindow(QMainWindow):
             return
 
         assistant = self._assistant()
+        if not self._ensure_consent(assistant):
+            self.nl_bar.show_status("Nothing was sent. The question needs your consent first.")
+            return
         profile = self.analysis.profile
         self.nl_bar.set_busy(True)
 
@@ -1222,6 +1262,8 @@ class MainWindow(QMainWindow):
         if self.analysis is None or self.analysis.profile is None:
             return
         assistant = self._assistant()
+        if not self._ensure_consent(assistant):
+            return
         profile = self.analysis.profile
         candidates = list(self.analysis.recommendations)
 

@@ -218,6 +218,120 @@ class TestSettingsConsent:
         assert dialog.consent_check.isEnabled()
         assert not dialog.consent_check.isChecked()
 
+    def test_claude_code_takes_no_key_but_still_needs_consent(
+        self, qtbot, settings: QSettings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stored: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            "plotaviz.ui.settings_dialog.set_api_key", lambda name, key: stored.append((name, key))
+        )
+        monkeypatch.setattr(
+            "plotaviz.core.llm.claude_code.find_claude_binary", lambda: "/usr/bin/claude"
+        )
+        dialog = SettingsDialog(settings=settings)
+        qtbot.addWidget(dialog)
+
+        self.select(dialog, "claude-code")
+
+        assert not dialog.key_edit.isEnabled()
+        assert not dialog.clear_key_button.isEnabled()
+        assert dialog.consent_check.isEnabled()
+        assert not dialog.consent_check.isChecked()
+        assert dialog.model_combo.currentText() == "sonnet"
+
+        dialog.key_edit.setText("sk-ant-left-over")  # never stored for a key-less provider
+        dialog.consent_check.setChecked(True)
+        dialog._save()
+        assert stored == []
+        assert settings.value("llm/provider") == "claude-code"
+        assert settings.value("llm/consent/claude-code", type=bool) is True
+
+
+class TestClaudeCodeAutoDetect:
+    """An installed Claude Code shows up, and is used, with no setup."""
+
+    @pytest.fixture
+    def installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "plotaviz.core.llm.claude_code.find_claude_binary", lambda: "/usr/bin/claude"
+        )
+
+    @staticmethod
+    def menu(dialog: SettingsDialog) -> list[str]:
+        combo = dialog.provider_combo
+        return [str(combo.itemData(i)) for i in range(combo.count())]
+
+    def test_hidden_when_not_installed(self, qtbot, settings: QSettings) -> None:
+        dialog = SettingsDialog(settings=settings)
+        qtbot.addWidget(dialog)
+        assert "claude-code" not in self.menu(dialog)
+        assert dialog.provider_name() == ""
+
+    def test_listed_and_preselected_on_a_fresh_setup(
+        self, qtbot, settings: QSettings, installed: None
+    ) -> None:
+        dialog = SettingsDialog(settings=settings)
+        qtbot.addWidget(dialog)
+        assert "claude-code" in self.menu(dialog)
+        assert dialog.provider_name() == "claude-code"
+
+    def test_codex_listed_when_installed(
+        self, qtbot, settings: QSettings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "plotaviz.core.llm.codex_cli.find_codex_binary", lambda: "/usr/bin/codex"
+        )
+        dialog = SettingsDialog(settings=settings)
+        qtbot.addWidget(dialog)
+        assert "codex-cli" in self.menu(dialog)
+        assert "claude-code" not in self.menu(dialog)
+        assert dialog.provider_name() == "codex-cli"
+        assert not dialog.key_edit.isEnabled()
+        assert "ChatGPT" in dialog.status_label.text()
+
+    def test_an_explicit_none_is_respected(
+        self, qtbot, settings: QSettings, installed: None
+    ) -> None:
+        settings.setValue("llm/provider", "")
+        dialog = SettingsDialog(settings=settings)
+        qtbot.addWidget(dialog)
+        assert dialog.provider_name() == ""
+
+    def test_saved_choice_survives_an_uninstall(self, qtbot, settings: QSettings) -> None:
+        settings.setValue("llm/provider", "claude-code")
+        dialog = SettingsDialog(settings=settings)
+        qtbot.addWidget(dialog)
+        assert dialog.provider_name() == "claude-code"
+        assert "no longer found" in dialog.provider_combo.currentText()
+
+    def test_main_window_uses_it_and_asks_consent_once(
+        self, installed: None, window: MainWindow, settings: QSettings, monkeypatch
+    ) -> None:
+        assistant = window._assistant()
+        assert assistant.provider is not None
+        assert assistant.provider.name == "claude-code"
+        assert window.nl_bar.input.isEnabled()
+        assert window.refine_button.isEnabled()
+
+        asked: list[str] = []
+
+        def answer(button: QMessageBox.StandardButton):
+            def ask(_parent, title, _text, *_args, **_kwargs):
+                asked.append(title)
+                return button
+
+            return ask
+
+        monkeypatch.setattr(QMessageBox, "question", answer(QMessageBox.StandardButton.No))
+        assert window._ensure_consent(assistant) is False
+        assert settings.value("llm/consent/claude-code", False, type=bool) is False
+
+        monkeypatch.setattr(QMessageBox, "question", answer(QMessageBox.StandardButton.Yes))
+        assert window._ensure_consent(window._assistant()) is True
+        assert settings.value("llm/consent/claude-code", type=bool) is True
+        assert window._ensure_consent(window._assistant()) is True
+        assert asked == ["Send a summary to Claude Code?"] * 2
+
 
 def test_export_asks_before_overwriting(
     qtbot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

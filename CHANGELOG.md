@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Use an existing Claude or ChatGPT plan, no API key.** New **Claude Code** and **Codex CLI**
+  providers run the locally installed, already signed-in CLI headless, with tools, MCP servers,
+  hooks, user config and session history switched off. The settings check names the plan the CLI
+  is signed in with (e.g. "your Claude Pro plan").
+- **Auto-detection.** Providers declare how they are found. Claude Code and Codex appear in
+  Settings only when installed, and when no provider has ever been chosen, the first one found
+  (Claude Code, then Codex, then Ollama) is used. An explicit choice, including "None", is kept.
+
+### Changed
+
+- The query bar and the second-opinion button are enabled once a provider is usable; consent is
+  asked in a dialog the first time a request would leave the machine and remembered per provider,
+  instead of the controls staying disabled until the box was ticked in Settings.
+
 ## [0.2.0] - 2026-11-01
 
 ### Added (since the audit-fixes merge)
