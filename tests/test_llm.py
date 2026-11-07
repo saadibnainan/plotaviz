@@ -718,3 +718,59 @@ class TestCodexCLI:
         assert result_ok is ok
         assert phrase in message
         assert run.calls[0]["args"] == ["/fake/bin/codex", "login", "status"]
+
+
+class TestResolveProvider:
+    """Which provider is used, given what Settings stored and what is installed."""
+
+    @pytest.fixture
+    def claude_installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(claude_code, "find_claude_binary", lambda: "/usr/bin/claude")
+
+    @pytest.fixture
+    def no_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("plotaviz.core.llm.get_api_key", lambda _name: None)
+
+    def test_never_chosen_uses_what_is_installed(self, claude_installed: None) -> None:
+        from plotaviz.core.llm import resolve_provider
+
+        assert resolve_provider(None) == ("claude-code", "")
+
+    def test_explicit_none_is_kept(self, claude_installed: None) -> None:
+        from plotaviz.core.llm import resolve_provider
+
+        assert resolve_provider("") == ("", "")
+
+    def test_key_less_saved_provider_falls_back_and_says_why(
+        self, claude_installed: None, no_keys: None
+    ) -> None:
+        from plotaviz.core.llm import resolve_provider
+
+        name, note = resolve_provider("anthropic")
+        assert name == "claude-code"
+        assert "Anthropic is selected but has no API key" in note
+        assert "Claude Code" in note
+
+    def test_saved_provider_with_a_key_is_kept(
+        self, claude_installed: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from plotaviz.core.llm import resolve_provider
+
+        monkeypatch.setattr("plotaviz.core.llm.get_api_key", lambda _name: "sk-ant-xxxxxxxx")
+        assert resolve_provider("anthropic") == ("anthropic", "")
+
+    def test_without_an_alternative_the_saved_choice_stands(self, no_keys: None) -> None:
+        from plotaviz.core.llm import resolve_provider
+
+        assert resolve_provider("openai") == ("openai", "")
+
+    def test_key_less_providers_are_never_overridden(self, claude_installed: None) -> None:
+        from plotaviz.core.llm import resolve_provider
+
+        assert resolve_provider("ollama") == ("ollama", "")
+        assert resolve_provider("codex-cli") == ("codex-cli", "")
+
+    def test_a_removed_provider_falls_back_to_detection(self, claude_installed: None) -> None:
+        from plotaviz.core.llm import resolve_provider
+
+        assert resolve_provider("skynet") == ("claude-code", "")

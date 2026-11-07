@@ -14,6 +14,7 @@ class AnthropicProvider(Provider):
     """
 
     name = "anthropic"
+    label = "Anthropic"
     # Suggestions only — the model box in Settings is editable.
     default_model = "claude-sonnet-5-5"
     available_models = (

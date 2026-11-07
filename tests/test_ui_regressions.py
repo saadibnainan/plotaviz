@@ -289,6 +289,22 @@ class TestClaudeCodeAutoDetect:
         assert not dialog.key_edit.isEnabled()
         assert "ChatGPT" in dialog.status_label.text()
 
+    def test_saved_provider_without_a_key_gives_way_to_claude_code(
+        self, qtbot, settings: QSettings, installed: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The old build saved "Anthropic" with no key; an installed Claude Code must still win."""
+        monkeypatch.setattr("plotaviz.core.llm.get_api_key", lambda _name: None)
+        monkeypatch.setattr("plotaviz.ui.settings_dialog.get_api_key", lambda _name: None)
+        settings.setValue("llm/provider", "anthropic")
+        settings.setValue("llm/model", "claude-sonnet-5-5")
+
+        dialog = SettingsDialog(settings=settings)
+        qtbot.addWidget(dialog)
+
+        assert dialog.provider_name() == "claude-code"
+        assert dialog.model_combo.currentText() == "sonnet"  # not the Anthropic model id
+        assert "Anthropic is selected but has no API key" in dialog.status_label.text()
+
     def test_an_explicit_none_is_respected(
         self, qtbot, settings: QSettings, installed: None
     ) -> None:
@@ -361,3 +377,40 @@ def test_type_panel_keeps_restored_overrides(qtbot, csv_path: Path) -> None:
     panel.set_profile(analysis.profile, analysis.type_overrides, inferred=analysis.inferred_types)  # type: ignore[arg-type]
 
     assert panel.overrides() == {"units": "categorical"}
+
+
+def test_main_window_falls_back_from_a_key_less_provider(
+    qtbot, settings: QSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "plotaviz.core.llm.claude_code.find_claude_binary", lambda: "/usr/bin/claude"
+    )
+    monkeypatch.setattr("plotaviz.core.llm.get_api_key", lambda _name: None)
+    monkeypatch.setattr("plotaviz.core.llm.base.get_api_key", lambda _name: None)
+    settings.setValue("llm/provider", "anthropic")
+    settings.setValue("llm/model", "claude-sonnet-5-5")
+
+    window = MainWindow()
+    window.ask_before_discarding = False
+    qtbot.addWidget(window)
+
+    assistant = window._assistant()
+    assert assistant.provider is not None
+    assert assistant.provider.name == "claude-code"
+    assert assistant.provider.model == "sonnet"
+    assert window.nl_bar.input.isEnabled()
+
+
+def test_query_bar_names_a_selected_but_unready_provider(
+    qtbot, settings: QSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("plotaviz.core.llm.get_api_key", lambda _name: None)
+    monkeypatch.setattr("plotaviz.core.llm.base.get_api_key", lambda _name: None)
+    settings.setValue("llm/provider", "anthropic")
+
+    window = MainWindow()
+    window.ask_before_discarding = False
+    qtbot.addWidget(window)
+
+    assert not window.nl_bar.input.isEnabled()
+    assert "Anthropic is selected but not set up yet" in window.nl_bar.status.text()

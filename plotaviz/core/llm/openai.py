@@ -13,6 +13,7 @@ class OpenAIProvider(Provider):
     """
 
     name = "openai"
+    label = "OpenAI"
     # Suggestions only — the model box in Settings is editable. Checked against OpenAI's
     # supported-model list in October 2026.
     default_model = "gpt-5.4-mini"

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A provider saved without an API key (for example "Anthropic", chosen before Claude Code was an
+  option) no longer blocks an installed Claude Code, Codex CLI, or Ollama: the installed one is
+  used, and Settings says why. A provider with a key, and an explicit "None", are kept as chosen.
+- The query bar no longer says "No LLM provider is configured" when one is selected but not set
+  up; it names the provider and points at Settings.
+
 ### Added
 
 - **Use an existing Claude or ChatGPT plan, no API key.** New **Claude Code** and **Codex CLI**
