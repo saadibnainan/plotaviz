@@ -13,6 +13,7 @@ class GeminiProvider(Provider):
     """
 
     name = "gemini"
+    label = "Google Gemini"
     # Suggestions only — the model box in Settings is editable. Stable IDs from Google's model
     # list as of October 2026.
     default_model = "gemini-3.5-flash"

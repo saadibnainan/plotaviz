@@ -51,7 +51,7 @@ from .. import __app_name__, __version__
 from ..core import loader
 from ..core.analysis import Analysis
 from ..core.errors import PlotaVizError
-from ..core.llm import LLMAssistant, OllamaProvider, detected_provider, get_provider
+from ..core.llm import LLMAssistant, OllamaProvider, get_provider, resolve_provider
 from ..core.plotter import MAX_POINTS
 from ..core.preprocess import QueryFilter
 from ..core.report import export_report
@@ -1136,24 +1136,30 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ LLM
 
-    def _provider_name(self) -> str:
-        """The provider in use: the one chosen in Settings, else one detected on this machine.
-
-        "Never chosen" and "chose none" are different: an explicit "None" in Settings is stored
-        as an empty string and respected, while a missing key falls back to auto-detection, so an
-        installed, signed-in Claude Code works out of the box.
-        """
+    def _saved_provider(self) -> str | None:
+        """The provider stored in Settings, or ``None`` if the user never chose one."""
         if self.settings.contains("llm/provider"):
             return str(self.settings.value("llm/provider", "") or "")
-        return detected_provider()
+        return None
+
+    def _provider_name(self) -> str:
+        """The provider in use. See :func:`resolve_provider` for how it is chosen.
+
+        "Never chosen" and "chose none" are different: an explicit "None" in Settings is respected,
+        while a missing choice — or a saved provider with no API key — falls back to one installed
+        on this machine, so a signed-in Claude Code works out of the box.
+        """
+        return resolve_provider(self._saved_provider())[0]
 
     def _assistant(self) -> LLMAssistant:
         """Build an assistant from the current settings."""
+        saved = self._saved_provider()
         name = self._provider_name()
         if not name:
             return LLMAssistant(None)
         kwargs: dict[str, Any] = {}
-        model = str(self.settings.value("llm/model", "") or "")
+        # The saved model belongs to the saved provider; a fallback uses its own default.
+        model = str(self.settings.value("llm/model", "") or "") if name == saved else ""
         if model:
             kwargs["model"] = model
         if name == "ollama":

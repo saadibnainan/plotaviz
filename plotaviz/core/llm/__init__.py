@@ -84,6 +84,7 @@ __all__ = [
     "get_api_key",
     "get_provider",
     "redact",
+    "resolve_provider",
     "sample_rows_for",
     "set_api_key",
 ]
@@ -110,6 +111,44 @@ def detected_provider() -> str:
     """
     found = detected_providers()
     return found[0] if found else ""
+
+
+def resolve_provider(saved: str | None) -> tuple[str, str]:
+    """Decide which provider to use, given what Settings has stored.
+
+    Args:
+        saved: The stored ``llm/provider`` value, or ``None`` if the user never chose one.
+
+    Returns:
+        ``(name, note)``. ``name`` is the provider to use, ``""`` for the local engine only.
+        ``note`` is empty when ``name`` is simply the saved choice; otherwise it explains, for
+        Settings to show, why another provider was picked.
+
+    The rules, in order:
+
+    * Never chosen → the first provider installed on this machine (:func:`detected_provider`).
+    * An explicit "None" → the local engine. That is a decision, not a gap to fill.
+    * A saved provider that needs an API key and has none stored cannot make a single request,
+      so an installed provider (Claude Code, Codex, Ollama) is used instead. Consent is still
+      asked for that provider by name before anything is sent.
+    """
+    if saved is None:
+        return detected_provider(), ""
+    if not saved:
+        return "", ""
+    cls = PROVIDERS.get(saved)
+    if cls is None:
+        return detected_provider(), ""
+    if cls.needs_api_key and not get_api_key(saved):
+        found = detected_provider()
+        if found:
+            chosen = cls.label or saved
+            used = PROVIDERS[found].label or found
+            return found, (
+                f"{chosen} is selected but has no API key, so PlotaViz is using {used}, which is "
+                f"installed on this machine. To use {chosen} instead, select it and paste a key."
+            )
+    return saved, ""
 
 
 def get_provider(name: str, **kwargs: Any) -> Provider:

@@ -35,6 +35,7 @@ class OllamaProvider(Provider):
     """
 
     name = "ollama"
+    label = "Ollama"
     default_model = "llama3.1"
     available_models = ("llama3.1", "llama3.2", "qwen2.5", "mistral", "gemma2", "phi4")
     sends_data_off_machine = False

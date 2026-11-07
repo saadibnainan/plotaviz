@@ -154,6 +154,13 @@ class NLQueryBar(QWidget):
             provider = f" via {provider_name}" if provider_name else ""
             self.input.setPlaceholderText(f"Ask for a chart{provider} — e.g. {EXAMPLES[0]}")
             self.status.hide()
+        elif provider_name:
+            self.input.setPlaceholderText(f"Finish setting up {provider_name} to ask for charts")
+            self.show_status(
+                f"{provider_name} is selected but not set up yet. In Settings, Check key / "
+                "connection shows what is missing, or choose another provider there. Chart "
+                "recommendations work without one."
+            )
         else:
             self.input.setPlaceholderText("Set up an LLM provider to ask for charts in words")
             self.show_status(

@@ -37,10 +37,10 @@ from ..core.llm import (
     CONSENT_TEXT,
     PROVIDERS,
     delete_api_key,
-    detected_provider,
     detected_providers,
     get_api_key,
     get_provider,
+    resolve_provider,
     set_api_key,
 )
 from ..core.llm.ollama import DEFAULT_HOST, is_loopback
@@ -229,11 +229,14 @@ class SettingsDialog(QDialog):
 
     def _load(self) -> None:
         """Populate the dialog from QSettings and the keyring."""
-        # Never chosen → the provider detected on this machine (Claude Code, when installed).
-        if self._settings.contains("llm/provider"):
-            provider = str(self._settings.value("llm/provider", "") or "")
-        else:
-            provider = detected_provider()
+        # Show the provider actually in use: never chosen, or saved without a key, resolves to
+        # one installed on this machine (Claude Code, when present).
+        saved = (
+            str(self._settings.value("llm/provider", "") or "")
+            if self._settings.contains("llm/provider")
+            else None
+        )
+        provider, fallback_note = resolve_provider(saved)
         index = self.provider_combo.findData(provider)
         self.provider_combo.setCurrentIndex(max(0, index))
 
@@ -254,8 +257,10 @@ class SettingsDialog(QDialog):
 
         self._on_provider_changed()
         model = str(self._settings.value("llm/model", "") or "")
-        if model:
+        if model and provider == saved:
             self.model_combo.setCurrentText(model)
+        if fallback_note:
+            self._status(fallback_note, "warn")
 
     def _save(self) -> None:
         """Write settings, and put any newly entered key into the keyring."""
