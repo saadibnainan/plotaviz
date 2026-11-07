@@ -7,13 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- A provider saved without an API key (for example "Anthropic", chosen before Claude Code was an
-  option) no longer blocks an installed Claude Code, Codex CLI, or Ollama: the installed one is
-  used, and Settings says why. A provider with a key, and an explicit "None", are kept as chosen.
-- The query bar no longer says "No LLM provider is configured" when one is selected but not set
-  up; it names the provider and points at Settings.
+## [0.3.0] - 2026-11-07
 
 ### Added
 
@@ -30,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The query bar and the second-opinion button are enabled once a provider is usable; consent is
   asked in a dialog the first time a request would leave the machine and remembered per provider,
   instead of the controls staying disabled until the box was ticked in Settings.
+
+### Fixed
+
+- A provider saved without an API key (for example "Anthropic", chosen before Claude Code was an
+  option) no longer blocks an installed Claude Code, Codex CLI, or Ollama: the installed one is
+  used, and Settings says why. A provider with a key, and an explicit "None", are kept as chosen.
+- The query bar no longer says "No LLM provider is configured" when one is selected but not set
+  up; it names the provider and points at Settings.
 
 ## [0.2.0] - 2026-11-01
 
@@ -167,6 +169,7 @@ Fixes from the full-stack and QA audit, and the first features it recommended â€
 - **CLI mode** â€” `plotaviz --input data.csv --auto --export chart.png` for scripting and CI.
 - Four sample datasets, each exercising a different chart path.
 
-[Unreleased]: https://github.com/saadibnainan/plotaviz/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/saadibnainan/plotaviz/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/saadibnainan/plotaviz/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/saadibnainan/plotaviz/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/saadibnainan/plotaviz/releases/tag/v0.1.0
