@@ -35,6 +35,8 @@ from .base import (
     sample_rows_for,
     set_api_key,
 )
+from .claude_code import ClaudeCodeProvider, find_claude_binary
+from .codex_cli import CodexCLIProvider, find_codex_binary
 from .gemini import GeminiProvider
 from .ollama import OllamaProvider
 from .openai import OpenAIProvider
@@ -52,7 +54,9 @@ CONSENT_TEXT = (
 #: Every provider PlotaViz can use, keyed by the name stored in settings and the keyring.
 PROVIDERS: dict[str, type[Provider]] = {
     AnthropicProvider.name: AnthropicProvider,
+    ClaudeCodeProvider.name: ClaudeCodeProvider,
     OpenAIProvider.name: OpenAIProvider,
+    CodexCLIProvider.name: CodexCLIProvider,
     GeminiProvider.name: GeminiProvider,
     OllamaProvider.name: OllamaProvider,
 }
@@ -62,6 +66,8 @@ __all__ = [
     "KEYRING_SERVICE",
     "PROVIDERS",
     "AnthropicProvider",
+    "ClaudeCodeProvider",
+    "CodexCLIProvider",
     "GeminiProvider",
     "LLMAssistant",
     "LLMResult",
@@ -70,13 +76,40 @@ __all__ = [
     "Provider",
     "build_prompt",
     "delete_api_key",
+    "detected_provider",
+    "detected_providers",
     "extract_json",
+    "find_claude_binary",
+    "find_codex_binary",
     "get_api_key",
     "get_provider",
     "redact",
     "sample_rows_for",
     "set_api_key",
 ]
+
+
+#: Which detected provider wins when the user has never chosen one. The subscription CLIs come
+#: first because they work with no setup at all; a local Ollama still needs a pulled model.
+AUTO_DETECT_ORDER: tuple[str, ...] = (
+    ClaudeCodeProvider.name,
+    CodexCLIProvider.name,
+    OllamaProvider.name,
+)
+
+
+def detected_providers() -> list[str]:
+    """Providers installed on this machine, in :data:`AUTO_DETECT_ORDER`. No process is started."""
+    return [name for name in AUTO_DETECT_ORDER if PROVIDERS[name].detect()]
+
+
+def detected_provider() -> str:
+    """The provider to use when the user has never chosen one, or ``""`` for the local engine.
+
+    Consent is still asked before the first request that would leave the machine.
+    """
+    found = detected_providers()
+    return found[0] if found else ""
 
 
 def get_provider(name: str, **kwargs: Any) -> Provider:

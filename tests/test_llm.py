@@ -11,6 +11,8 @@ Three properties matter more than any individual provider working:
 from __future__ import annotations
 
 import json
+import subprocess
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -20,12 +22,17 @@ from plotaviz.core.errors import LLMError, ProviderNotConfigured, SpecError
 from plotaviz.core.llm import (
     PROVIDERS,
     AnthropicProvider,
+    ClaudeCodeProvider,
+    CodexCLIProvider,
     GeminiProvider,
     LLMAssistant,
     OllamaProvider,
     OpenAIProvider,
     Provider,
+    _cli,
     build_prompt,
+    claude_code,
+    codex_cli,
     extract_json,
     get_provider,
     redact,
@@ -65,10 +72,25 @@ def dataset_profile(timeseries_df: pd.DataFrame):
 
 class TestRegistry:
     def test_every_provider_is_registered(self) -> None:
-        assert set(PROVIDERS) == {"anthropic", "openai", "gemini", "ollama"}
+        assert set(PROVIDERS) == {
+            "anthropic",
+            "claude-code",
+            "openai",
+            "codex-cli",
+            "gemini",
+            "ollama",
+        }
 
     @pytest.mark.parametrize(
-        "cls", [AnthropicProvider, OpenAIProvider, GeminiProvider, OllamaProvider]
+        "cls",
+        [
+            AnthropicProvider,
+            ClaudeCodeProvider,
+            OpenAIProvider,
+            CodexCLIProvider,
+            GeminiProvider,
+            OllamaProvider,
+        ],
     )
     def test_providers_declare_a_default_model(self, cls: type[Provider]) -> None:
         assert cls.default_model
@@ -76,8 +98,20 @@ class TestRegistry:
 
     def test_only_ollama_stays_on_the_machine(self) -> None:
         assert OllamaProvider.sends_data_off_machine is False
-        for cls in (AnthropicProvider, OpenAIProvider, GeminiProvider):
+        for cls in (
+            AnthropicProvider,
+            ClaudeCodeProvider,
+            OpenAIProvider,
+            CodexCLIProvider,
+            GeminiProvider,
+        ):
             assert cls.sends_data_off_machine is True
+
+    def test_only_the_sdk_providers_take_a_pasted_key(self) -> None:
+        for cls in (AnthropicProvider, OpenAIProvider, GeminiProvider):
+            assert cls.needs_api_key is True
+        for cls in (ClaudeCodeProvider, CodexCLIProvider, OllamaProvider):
+            assert cls.needs_api_key is False
 
     def test_unknown_provider_lists_the_real_ones(self) -> None:
         with pytest.raises(ProviderNotConfigured, match="Available providers"):
@@ -306,3 +340,381 @@ class TestRedaction:
 
     def test_ordinary_text_is_untouched(self) -> None:
         assert redact("column revenue is missing") == "column revenue is missing"
+
+
+def _cli_result(**fields: Any) -> str:
+    """A ``claude -p --output-format json`` result object."""
+    base: dict[str, Any] = {"type": "result", "subtype": "success", "is_error": False}
+    base.update(fields)
+    return json.dumps(base)
+
+
+class FakeRun:
+    """Stands in for ``subprocess.run`` and records how the CLI was invoked."""
+
+    def __init__(
+        self,
+        stdout: str = "",
+        stderr: str = "",
+        returncode: int = 0,
+        error: Exception | None = None,
+    ) -> None:
+        self.stdout, self.stderr, self.returncode, self.error = stdout, stderr, returncode, error
+        self.calls: list[dict[str, Any]] = []
+
+    def __call__(self, args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        self.calls.append({"args": args, **kwargs})
+        if self.error:
+            raise self.error
+        return subprocess.CompletedProcess(args, self.returncode, self.stdout, self.stderr)
+
+
+class TestClaudeCode:
+    """The Claude Code provider shells out to the local CLI. Every test here mocks the process."""
+
+    @pytest.fixture
+    def provider(self) -> ClaudeCodeProvider:
+        return ClaudeCodeProvider(binary="/fake/bin/claude")
+
+    def test_needs_no_key_and_ignores_one(self) -> None:
+        provider = ClaudeCodeProvider(api_key="sk-ant-should-be-ignored", binary="/x/claude")
+        assert provider._api_key is None
+        assert provider.is_configured() is True
+
+    def test_not_configured_without_the_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(claude_code, "find_claude_binary", lambda: None)
+        provider = ClaudeCodeProvider()
+        assert provider.is_configured() is False
+        assert provider.auth_status() is None
+        with pytest.raises(LLMError, match="not installed"):
+            provider.complete("system", "user", timeout=5)
+
+    def test_runs_a_tool_less_isolated_one_shot(
+        self, provider: ClaudeCodeProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = FakeRun(stdout=_cli_result(result='{"chart": "bar"}'))
+        monkeypatch.setattr(claude_code.subprocess, "run", run)
+
+        assert provider.complete("SYSTEM", "the user message", timeout=12) == '{"chart": "bar"}'
+
+        call = run.calls[0]
+        args = call["args"]
+        assert args[0] == "/fake/bin/claude"
+        assert "--print" in args
+        assert args[args.index("--tools") + 1] == ""
+        assert args[args.index("--system-prompt") + 1] == "SYSTEM"
+        assert args[args.index("--model") + 1] == "sonnet"
+        assert args[args.index("--output-format") + 1] == "json"
+        for flag in ("--safe-mode", "--strict-mcp-config", "--no-session-persistence"):
+            assert flag in args
+        # The prompt travels on stdin, not on the command line where `ps` would show it.
+        assert call["input"] == "the user message"
+        assert "the user message" not in args
+        assert call["timeout"] == 12
+
+    def test_model_choice_is_passed_through(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        run = FakeRun(stdout=_cli_result(result="{}"))
+        monkeypatch.setattr(claude_code.subprocess, "run", run)
+        get_provider("claude-code", model="opus", binary="/c").complete("s", "u", timeout=5)
+        args = run.calls[0]["args"]
+        assert args[args.index("--model") + 1] == "opus"
+
+    def test_end_to_end_reply_becomes_a_validated_spec(
+        self, provider: ClaudeCodeProvider, dataset_profile: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spec = {"chart": "line", "x": "order_date", "y": "revenue", "color": "region"}
+        monkeypatch.setattr(
+            claude_code.subprocess, "run", FakeRun(stdout=_cli_result(result=json.dumps(spec)))
+        )
+
+        result = LLMAssistant(provider, consent=True).from_question(
+            dataset_profile, "revenue by region over time"
+        )
+
+        assert result.spec.chart == "line"
+        assert result.provider == "claude-code"
+
+    def test_hallucinated_column_is_still_rejected(
+        self, provider: ClaudeCodeProvider, dataset_profile: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reply = json.dumps({"chart": "bar", "x": "not_a_column", "y": "revenue"})
+        monkeypatch.setattr(
+            claude_code.subprocess, "run", FakeRun(stdout=_cli_result(result=reply))
+        )
+        with pytest.raises(SpecError):
+            provider.suggest_chart(dataset_profile, question="anything")
+
+    def test_signed_out_cli_says_how_to_sign_in(
+        self, provider: ClaudeCodeProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stdout = _cli_result(is_error=True, result="Not logged in · Please run /login")
+        monkeypatch.setattr(claude_code.subprocess, "run", FakeRun(stdout=stdout, returncode=1))
+        with pytest.raises(LLMError, match="not signed in"):
+            provider.complete("s", "u", timeout=5)
+
+    def test_other_api_errors_are_reported(
+        self, provider: ClaudeCodeProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stdout = _cli_result(is_error=True, result="API Error: 529 Overloaded")
+        monkeypatch.setattr(claude_code.subprocess, "run", FakeRun(stdout=stdout, returncode=1))
+        with pytest.raises(LLMError, match="request failed"):
+            provider.complete("s", "u", timeout=5)
+
+    def test_non_json_output_is_an_error_not_a_crash(
+        self, provider: ClaudeCodeProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = FakeRun(stdout="", stderr="error: unknown option", returncode=2)
+        monkeypatch.setattr(claude_code.subprocess, "run", run)
+        with pytest.raises(LLMError, match="status 2"):
+            provider.complete("s", "u", timeout=5)
+
+    def test_timeout_falls_back_to_the_local_engine(
+        self, provider: ClaudeCodeProvider, dataset_profile: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = FakeRun(error=subprocess.TimeoutExpired(cmd="claude", timeout=1))
+        monkeypatch.setattr(claude_code.subprocess, "run", run)
+        with pytest.raises(LLMError, match="did not respond"):
+            provider.complete("s", "u", timeout=1)
+
+        candidates = ChartSelector().recommend(dataset_profile)
+        assistant = LLMAssistant(provider, consent=True)
+        assert assistant.refine(dataset_profile, candidates) is candidates[0]
+
+    def test_auth_status_is_read_without_sending_a_prompt(
+        self, provider: ClaudeCodeProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = FakeRun(stdout=json.dumps({"loggedIn": True, "authMethod": "claude.ai"}))
+        monkeypatch.setattr(claude_code.subprocess, "run", run)
+        assert provider.auth_status() == {"loggedIn": True, "authMethod": "claude.ai"}
+        assert run.calls[0]["args"] == ["/fake/bin/claude", "auth", "status"]
+
+    def test_check_key_reports_the_signed_in_account(
+        self, provider: ClaudeCodeProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        status = {"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "pro"}
+        run = FakeRun(stdout=json.dumps(status))
+        monkeypatch.setattr(claude_code.subprocess, "run", run)
+        ok, message, models = provider.check_key()
+        assert ok is True
+        assert "Claude Pro plan" in message
+        assert models == list(ClaudeCodeProvider.available_models)
+
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [
+            ({"authMethod": "claude.ai", "subscriptionType": "pro"}, "your Claude Pro plan"),
+            ({"authMethod": "claude.ai", "subscriptionType": "max"}, "your Claude Max plan"),
+            ({"authMethod": "claude.ai"}, "your Claude subscription"),
+            ({"authMethod": "api_key"}, "api_key"),
+        ],
+    )
+    def test_names_the_plan(self, status: dict[str, Any], expected: str) -> None:
+        assert claude_code.describe_account(status) == expected
+
+    def test_detected_only_when_installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from plotaviz.core.llm import detected_provider
+
+        assert detected_provider() == ""
+        monkeypatch.setattr(claude_code, "find_claude_binary", lambda: "/usr/bin/claude")
+        assert detected_provider() == "claude-code"
+
+    def test_check_key_says_how_to_sign_in(
+        self, provider: ClaudeCodeProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = FakeRun(stdout=json.dumps({"loggedIn": False}), returncode=1)
+        monkeypatch.setattr(claude_code.subprocess, "run", run)
+        ok, message, models = provider.check_key()
+        assert ok is False
+        assert "/login" in message
+        assert models == []
+
+    def test_check_key_without_the_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(claude_code, "find_claude_binary", lambda: None)
+        ok, message, _models = ClaudeCodeProvider().check_key()
+        assert ok is False
+        assert "not found" in message
+
+    def test_child_env_drops_session_markers_and_bundle_libs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDECODE", "1")
+        monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/_MEI123")
+        monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/lib/custom")
+        monkeypatch.setattr(_cli.sys, "frozen", True, raising=False)
+
+        env = claude_code._child_env()
+
+        assert "CLAUDECODE" not in env
+        assert env["LD_LIBRARY_PATH"] == "/usr/lib/custom"
+        assert "LD_LIBRARY_PATH_ORIG" not in env
+
+    @pytest.mark.real_cli_lookup
+    def test_finds_the_cli_outside_path(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = tmp_path / "claude"
+        fake.write_text("#!/bin/sh\n")
+        fake.chmod(0o755)
+        monkeypatch.setattr(_cli.shutil, "which", lambda _name: None)
+        monkeypatch.setattr(claude_code, "_FALLBACK_LOCATIONS", (str(fake),))
+        assert claude_code.find_claude_binary() == str(fake)
+
+
+class TestAutoDetection:
+    """Each provider says how it is found; the first one installed is used by default."""
+
+    def test_nothing_installed_means_local_engine(self) -> None:
+        from plotaviz.core.llm import detected_provider, detected_providers
+
+        assert detected_providers() == []
+        assert detected_provider() == ""
+
+    def test_order_prefers_the_subscription_clis(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from plotaviz.core.llm import detected_provider, detected_providers, ollama
+
+        monkeypatch.setattr(ollama, "find_ollama_binary", lambda: "/usr/bin/ollama")
+        assert detected_provider() == "ollama"
+        monkeypatch.setattr(codex_cli, "find_codex_binary", lambda: "/usr/bin/codex")
+        assert detected_provider() == "codex-cli"
+        monkeypatch.setattr(claude_code, "find_claude_binary", lambda: "/usr/bin/claude")
+        assert detected_providers() == ["claude-code", "codex-cli", "ollama"]
+
+    def test_api_key_providers_are_never_auto_detected(self) -> None:
+        for cls in (AnthropicProvider, OpenAIProvider, GeminiProvider):
+            assert cls.detect() is False
+            assert cls.listed_only_when_detected is False
+
+
+class FakeCodex(FakeRun):
+    """``codex exec`` stand-in: writes the reply to the ``--output-last-message`` file."""
+
+    def __init__(self, reply: str = "", **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.reply = reply
+
+    def __call__(self, args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        done = super().__call__(args, **kwargs)
+        if "--output-last-message" in args and self.returncode == 0 and self.reply:
+            Path(args[args.index("--output-last-message") + 1]).write_text(self.reply)
+        return done
+
+
+class TestCodexCLI:
+    """The Codex CLI provider shells out to ``codex exec``. Every test mocks the process."""
+
+    @pytest.fixture
+    def provider(self) -> CodexCLIProvider:
+        return CodexCLIProvider(binary="/fake/bin/codex")
+
+    def test_listed_only_when_installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        assert CodexCLIProvider.detect() is False
+        monkeypatch.setattr(codex_cli, "find_codex_binary", lambda: "/usr/bin/codex")
+        assert CodexCLIProvider.detect() is True
+        assert CodexCLIProvider.listed_only_when_detected is True
+
+    def test_runs_without_tools_config_or_session(
+        self, provider: CodexCLIProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = FakeCodex(reply='{"chart": "bar"}')
+        monkeypatch.setattr(codex_cli.subprocess, "run", run)
+
+        assert provider.complete("SYSTEM", "the user message", timeout=12) == '{"chart": "bar"}'
+
+        call = run.calls[0]
+        args = call["args"]
+        assert args[:2] == ["/fake/bin/codex", "exec"]
+        for flag in ("--ephemeral", "--ignore-user-config", "--ignore-rules"):
+            assert flag in args
+        assert args[args.index("--sandbox") + 1] == "read-only"
+        disabled = {args[i + 1] for i, a in enumerate(args) if a == "--disable"}
+        assert {"shell_tool", "unified_exec", "computer_use", "browser_use"} <= disabled
+        assert "--model" not in args  # "default" leaves the choice to Codex
+        assert args[-1] == "-"
+        # The prompt, instructions first, travels on stdin, never on the command line.
+        assert call["input"] == "SYSTEM\n\nthe user message"
+        assert "the user message" not in " ".join(args)
+        assert call["cwd"] == args[args.index("--cd") + 1]
+
+    def test_model_choice_is_passed_through(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        run = FakeCodex(reply="{}")
+        monkeypatch.setattr(codex_cli.subprocess, "run", run)
+        get_provider("codex-cli", model="gpt-6-luna", binary="/c").complete("s", "u", timeout=5)
+        args = run.calls[0]["args"]
+        assert args[args.index("--model") + 1] == "gpt-6-luna"
+
+    def test_end_to_end_reply_becomes_a_validated_spec(
+        self, provider: CodexCLIProvider, dataset_profile: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spec = {"chart": "line", "x": "order_date", "y": "revenue", "color": "region"}
+        monkeypatch.setattr(codex_cli.subprocess, "run", FakeCodex(reply=json.dumps(spec)))
+
+        result = LLMAssistant(provider, consent=True).from_question(dataset_profile, "trend")
+
+        assert result.spec.chart == "line"
+        assert result.provider == "codex-cli"
+
+    def test_a_feature_codex_no_longer_has_is_dropped_and_retried(
+        self, provider: CodexCLIProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[list[str]] = []
+
+        def run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+            calls.append(args)
+            if "apps" in args:
+                return subprocess.CompletedProcess(args, 1, "", "Error: Unknown feature flag: apps")
+            Path(args[args.index("--output-last-message") + 1]).write_text("{}")
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        monkeypatch.setattr(codex_cli.subprocess, "run", run)
+        assert provider.complete("s", "u", timeout=5) == "{}"
+        assert len(calls) == 2
+        assert "shell_tool" in calls[1]
+        assert "apps" not in calls[1]
+
+    def test_signed_out_cli_says_how_to_sign_in(
+        self, provider: CodexCLIProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = FakeCodex(stderr="Error: Not logged in. Run codex login.", returncode=1)
+        monkeypatch.setattr(codex_cli.subprocess, "run", run)
+        with pytest.raises(LLMError, match="not signed in"):
+            provider.complete("s", "u", timeout=5)
+
+    def test_a_401_in_the_echoed_prompt_is_not_a_sign_in_error(
+        self, provider: CodexCLIProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = FakeCodex(stderr="user\nmax: 401\nError: stream disconnected", returncode=1)
+        monkeypatch.setattr(codex_cli.subprocess, "run", run)
+        with pytest.raises(LLMError, match="exited with status 1"):
+            provider.complete("s", "u", timeout=5)
+
+    def test_timeout_is_an_llm_error(
+        self, provider: CodexCLIProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = FakeCodex(error=subprocess.TimeoutExpired(cmd="codex", timeout=1))
+        monkeypatch.setattr(codex_cli.subprocess, "run", run)
+        with pytest.raises(LLMError, match="did not respond"):
+            provider.complete("s", "u", timeout=1)
+
+    @pytest.mark.parametrize(
+        ("stderr", "returncode", "ok", "phrase"),
+        [
+            ("Logged in using ChatGPT", 0, True, "ChatGPT plan"),
+            ("Logged in using an API key - sk-***", 0, True, "OpenAI API key"),
+            ("Not logged in", 1, False, "codex login"),
+        ],
+    )
+    def test_check_key_reads_login_status(
+        self,
+        provider: CodexCLIProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        stderr: str,
+        returncode: int,
+        ok: bool,
+        phrase: str,
+    ) -> None:
+        run = FakeCodex(stderr=stderr, returncode=returncode)
+        monkeypatch.setattr(codex_cli.subprocess, "run", run)
+        result_ok, message, _models = provider.check_key()
+        assert result_ok is ok
+        assert phrase in message
+        assert run.calls[0]["args"] == ["/fake/bin/codex", "login", "status"]

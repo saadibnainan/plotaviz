@@ -12,10 +12,16 @@ import json
 from urllib.parse import urlparse
 
 from ..errors import LLMError
+from ._cli import find_executable
 from .base import DEFAULT_TIMEOUT, Provider
 
 #: Where Ollama listens by default.
 DEFAULT_HOST = "http://localhost:11434"
+
+
+def find_ollama_binary() -> str | None:
+    """Locate the ``ollama`` executable, or return ``None`` if it is not installed."""
+    return find_executable("ollama", ("/usr/local/bin/ollama", "/opt/homebrew/bin/ollama"))
 
 
 class OllamaProvider(Provider):
@@ -32,6 +38,12 @@ class OllamaProvider(Provider):
     default_model = "llama3.1"
     available_models = ("llama3.1", "llama3.2", "qwen2.5", "mistral", "gemma2", "phi4")
     sends_data_off_machine = False
+    needs_api_key = False
+
+    @classmethod
+    def detect(cls) -> bool:
+        """The ``ollama`` command is installed. The server is not probed: that is network I/O."""
+        return find_ollama_binary() is not None
 
     def __init__(
         self,

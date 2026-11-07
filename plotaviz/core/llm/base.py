@@ -99,6 +99,9 @@ class Provider(ABC):
     #: Identifier used in settings and keyring entries.
     name: str = "base"
 
+    #: Human-readable name for dialogs and the query bar. Falls back to :attr:`name`.
+    label: str = ""
+
     #: Model used when the user has not chosen one.
     default_model: str = ""
 
@@ -107,6 +110,17 @@ class Provider(ABC):
 
     #: Whether this provider sends data off the machine. False for local runtimes.
     sends_data_off_machine: bool = True
+
+    #: Whether the user must paste an API key for this provider. False when the provider brings
+    #: its own credentials (a local runtime, or a CLI that is already signed in).
+    needs_api_key: bool = True
+
+    #: Offer this provider in Settings only when :meth:`detect` finds it on this machine. For
+    #: providers that are a local install rather than an account anyone can add a key for.
+    listed_only_when_detected: bool = False
+
+    #: What Settings says when this key-less provider is selected.
+    setup_note: str = ""
 
     def __init__(
         self,
@@ -117,6 +131,17 @@ class Provider(ABC):
         self.model = model or self.default_model
         self._api_key = api_key
         self.timeout = timeout
+
+    # ------------------------------------------------------------------ discovery
+
+    @classmethod
+    def detect(cls) -> bool:
+        """Whether this provider is installed and usable here with no setup in PlotaViz.
+
+        Must be cheap — it runs when Settings and the main window build their provider state —
+        so it may look for files but never starts a process or touches the network.
+        """
+        return False
 
     # ------------------------------------------------------------------ credentials
 

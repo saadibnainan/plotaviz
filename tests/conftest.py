@@ -18,6 +18,26 @@ import pytest
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers", "real_cli_lookup: let the test search for real claude/codex/ollama executables"
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_local_llm_tools(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pretend no LLM tool is installed, so results do not depend on the test machine.
+
+    PlotaViz auto-selects Claude Code, the Codex CLI, or Ollama when it finds them. Tests that
+    want one present patch its ``find_*_binary`` function themselves.
+    """
+    if request.node.get_closest_marker("real_cli_lookup"):
+        return
+    monkeypatch.setattr("plotaviz.core.llm.claude_code.find_claude_binary", lambda: None)
+    monkeypatch.setattr("plotaviz.core.llm.codex_cli.find_codex_binary", lambda: None)
+    monkeypatch.setattr("plotaviz.core.llm.ollama.find_ollama_binary", lambda: None)
+
+
 @pytest.fixture
 def rng() -> np.random.Generator:
     """A seeded generator, so failures reproduce."""

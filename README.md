@@ -268,6 +268,21 @@ it at another machine and it is treated like any remote provider: consent is req
 Hosted providers: Anthropic (Claude), OpenAI, and Google Gemini. Install with
 `pip install -e ".[llm]"`, then paste a key in Settings.
 
+### Use a subscription you already have (Claude Code, Codex CLI)
+
+If [Claude Code](https://claude.com/claude-code) or the Codex CLI is installed and signed in,
+PlotaViz finds it on its own: it appears in **Settings → LLM provider**, and on a fresh setup it is
+selected automatically, so the query bar works on first launch with your Claude Pro/Max or
+ChatGPT plan. No API key, nothing in the keychain. Claude Code wins if both are installed, then
+Codex, then a local Ollama; an explicit choice in Settings (including "None") always wins.
+
+Each request runs the CLI headless and stripped down. Claude Code gets `--safe-mode`, no tools, no
+MCP servers, PlotaViz's own system prompt and no saved session. Codex gets a read-only sandbox in
+an empty temp folder, no user config or rules, no saved session, and its shell, browser,
+computer-use, app and plugin features off. The summary still leaves the machine, so PlotaViz asks
+for consent once, the first time you ask a question. **Check key / connection** reports which
+account the CLI is signed in with, without sending anything.
+
 ---
 
 ## Features

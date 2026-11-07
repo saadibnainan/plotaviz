@@ -37,6 +37,8 @@ from ..core.llm import (
     CONSENT_TEXT,
     PROVIDERS,
     delete_api_key,
+    detected_provider,
+    detected_providers,
     get_api_key,
     get_provider,
     set_api_key,
@@ -53,6 +55,8 @@ _STORED_PLACEHOLDER = "•" * 24
 
 _PROVIDER_LABELS = {
     "anthropic": "Anthropic (Claude)",
+    "claude-code": "Claude Code — detected, uses your Claude login (no API key)",
+    "codex-cli": "Codex CLI — detected, uses your ChatGPT login (no API key)",
     "openai": "OpenAI",
     "gemini": "Google Gemini",
     "ollama": "Ollama (local server — nothing leaves this machine)",
@@ -101,8 +105,19 @@ class SettingsDialog(QDialog):
 
         self.provider_combo = QComboBox(llm_box)
         self.provider_combo.addItem("None — use the local engine only", "")
-        for name in PROVIDERS:
-            self.provider_combo.addItem(_PROVIDER_LABELS.get(name, name), name)
+        # Local CLI providers (Claude Code, Codex) are offered only when installed — or when they
+        # are already the saved choice, so a configured provider never silently disappears.
+        detected = set(detected_providers())
+        saved = str(self._settings.value("llm/provider", "") or "")
+        for name, cls in PROVIDERS.items():
+            label = _PROVIDER_LABELS.get(name, name)
+            if cls.listed_only_when_detected and name not in detected:
+                if saved != name:
+                    continue
+                label = f"{cls.label or name} (no longer found on this machine)"
+            elif name in detected and not cls.listed_only_when_detected:
+                label = f"{label} — installed"
+            self.provider_combo.addItem(label, name)
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         llm_form.addRow("Provider", self.provider_combo)
 
@@ -214,7 +229,11 @@ class SettingsDialog(QDialog):
 
     def _load(self) -> None:
         """Populate the dialog from QSettings and the keyring."""
-        provider = str(self._settings.value("llm/provider", "") or "")
+        # Never chosen → the provider detected on this machine (Claude Code, when installed).
+        if self._settings.contains("llm/provider"):
+            provider = str(self._settings.value("llm/provider", "") or "")
+        else:
+            provider = detected_provider()
         index = self.provider_combo.findData(provider)
         self.provider_combo.setCurrentIndex(max(0, index))
 
@@ -255,7 +274,8 @@ class SettingsDialog(QDialog):
         self._settings.setValue("performance/prefer_static", self.static_check.isChecked())
 
         key = self.key_edit.text().strip()
-        if provider and key and key != _STORED_PLACEHOLDER:
+        takes_key = bool(provider) and PROVIDERS[provider].needs_api_key
+        if takes_key and key and key != _STORED_PLACEHOLDER:
             try:
                 set_api_key(provider, key)
             except Exception as exc:
@@ -272,7 +292,7 @@ class SettingsDialog(QDialog):
         """Update the model list, key field, and consent state for the chosen provider."""
         provider = str(self.provider_combo.currentData() or "")
         is_ollama = provider == "ollama"
-        needs_key = bool(provider) and not is_ollama
+        needs_key = bool(provider) and PROVIDERS[provider].needs_api_key
 
         self.key_edit.setEnabled(needs_key)
         self.clear_key_button.setEnabled(needs_key)
@@ -296,6 +316,9 @@ class SettingsDialog(QDialog):
         elif is_ollama:
             self.key_edit.clear()
             self._describe_ollama_host()
+        elif provider and PROVIDERS[provider].setup_note:
+            self.key_edit.clear()
+            self._status(PROVIDERS[provider].setup_note, "mid")
         else:
             self.key_edit.clear()
             self.status_label.setText(
